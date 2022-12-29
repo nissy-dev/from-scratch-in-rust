@@ -1,0 +1,15 @@
+[package]
+name = "exercise-js"
+version = "0.1.0"
+authors = ["Takashi Yoneuchi <takashi.yoneuchi@shift-js.info>"]
+edition = "2018"
+
+[[bin]]
+name = "exercise-js"
+test = false
+bench = false
+
+[dependencies]
+combine = "4.5.2"
+cursive = "0.16.3"
+rusty_v8 = "0.22.1"

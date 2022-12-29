@@ -1,0 +1,14 @@
+[package]
+name = "exercise-rendering"
+version = "0.1.0"
+authors = ["Takashi Yoneuchi <takashi.yoneuchi@shift-js.info>"]
+edition = "2018"
+
+[[bin]]
+name = "exercise-rendering"
+test = false
+bench = false
+
+[dependencies]
+combine = "4.5.2"
+cursive = "0.16.3"
