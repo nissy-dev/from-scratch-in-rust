@@ -1,56 +1,65 @@
 #[derive(Debug)]
 pub struct StyleSheet {
-    rules: Vec<Rule>,
+    pub rules: Vec<Rule>,
 }
 
 #[derive(Debug)]
-struct Rule {
-    selectors: Vec<Selector>,
-    declarations: Vec<Declaration>,
+pub struct Rule {
+    pub selectors: Vec<Selector>,
+    pub declarations: Vec<Declaration>,
 }
 
 #[derive(Debug)]
-enum Selector {
+pub enum Selector {
     Simple(SimpleSelector),
 }
 
 #[derive(Debug)]
-struct SimpleSelector {
-    tag_name: Option<String>,
-    id: Option<String>,
-    class: Vec<String>,
+pub struct SimpleSelector {
+    pub tag_name: Option<String>,
+    pub id: Option<String>,
+    pub class: Vec<String>,
 }
 
 #[derive(Debug)]
-struct Declaration {
-    name: String,
-    value: Value,
+pub struct Declaration {
+    pub name: String,
+    pub value: Value,
 }
 
-#[derive(Debug)]
-enum Value {
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
     Keyword(String),
     Length(f32, Unit),
     ColorValue(Color),
 }
 
-#[derive(Debug)]
-enum Unit {
+impl Value {
+    pub fn to_px(&self) -> f32 {
+        match *self {
+            Value::Length(f, Unit::Px) => f,
+            _ => 0.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Unit {
     Px,
 }
 
-#[derive(Debug)]
-struct Color {
-    r: u8,
-    g: u8,
-    b: u8,
-    a: u8,
+#[derive(Debug, Clone, PartialEq, Copy)]
+pub struct Color {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+    pub a: u8,
 }
 
-type Specificity = (usize, usize, usize);
+pub type Specificity = (usize, usize, usize);
 
 impl Selector {
-    fn specificity(&self) -> Specificity {
+    pub fn specificity(&self) -> Specificity {
         // https://www.w3.org/TR/selectors/#specificity
         let Selector::Simple(ref simple) = *self;
         let a = simple.id.iter().count();
@@ -68,10 +77,6 @@ struct Parser {
 impl Parser {
     fn next_char(&self) -> char {
         self.input[self.pos..].chars().next().unwrap()
-    }
-
-    fn starts_with(&self, s: &str) -> bool {
-        self.input[self.pos..].starts_with(s)
     }
 
     fn eof(&self) -> bool {
