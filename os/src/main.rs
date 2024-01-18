@@ -13,7 +13,7 @@ use core::panic::PanicInfo;
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     println!("{}", info);
-    loop {}
+    blog_os::hlt_loop();
 }
 
 #[cfg(test)]
@@ -29,15 +29,9 @@ pub extern "C" fn _start() -> ! {
     println!("Hello World{}", "!");
     blog_os::init();
 
-    fn stack_overflow() {
-        stack_overflow(); // 再帰呼び出しのために、リターンアドレスがプッシュされる
-    }
-
-    // スタックオーバーフローを起こす
-    stack_overflow();
-
     #[cfg(test)]
     test_main();
 
-    loop {}
+    println!("It did not crash!");
+    blog_os::hlt_loop();
 }
