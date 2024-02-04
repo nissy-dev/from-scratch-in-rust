@@ -6,7 +6,12 @@
 
 mod serial;
 mod vga_buffer;
+
+extern crate alloc;
+use blog_os::memory::{self, BootInfoFrameAllocator};
+use bootloader::{entry_point, BootInfo};
 use core::panic::PanicInfo;
+use x86_64::VirtAddr;
 
 // この関数はパニック時に呼ばれる
 #[cfg(not(test))]
@@ -22,12 +27,19 @@ fn panic(info: &PanicInfo) -> ! {
     blog_os::test_panic_handler(info)
 }
 
-// リンカはデフォルトで `_start` という名前の関数を探すので、
-// この関数がエントリポイントとなる
-#[no_mangle]
-pub extern "C" fn _start() -> ! {
+entry_point!(kernel_main);
+
+fn kernel_main(boot_info: &'static BootInfo) -> ! {
     println!("Hello World{}", "!");
     blog_os::init();
+
+    let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
+    let mut mapper = unsafe { memory::init(phys_mem_offset) };
+    let mut frame_allocator = unsafe { BootInfoFrameAllocator::init(&boot_info.memory_map) };
+
+    // ヒープ領域の作成
+    blog_os::allocator::init_heap(&mut mapper, &mut frame_allocator)
+        .expect("heap initialization failed");
 
     #[cfg(test)]
     test_main();
