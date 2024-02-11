@@ -7,6 +7,7 @@ use x86_64::{
     VirtAddr,
 };
 
+#[allow(unused_imports)]
 use self::{
     bump::BumpAllocator, fixed_size_block::FixedSizeBlockAllocator,
     linked_list::LinkedListAllocator,
