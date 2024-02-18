@@ -1,0 +1,10 @@
+services:
+  rust_devcontainer:
+    image: rust:latest
+    restart: always
+    tty: true
+    # プロセスを clone するときに特権プロセスでないとエラーになるために追加
+    privileged: true
+    volumes:
+      - ../:/workspace
+    working_dir: /workspace

@@ -1,5 +1,6 @@
-use std::path::PathBuf;
+use std::{os::fd::RawFd, path::PathBuf};
 
+use nix::sys::socket::{socketpair, AddressFamily, SockFlag, SockType};
 use structopt::StructOpt;
 
 use crate::errors::ErrorCode;
@@ -44,4 +45,16 @@ pub fn setup_logging(level: log::LevelFilter) {
         .format_timestamp_secs()
         .filter(None, level)
         .init();
+}
+
+pub fn generate_socketpair() -> Result<(RawFd, RawFd), ErrorCode> {
+    match socketpair(
+        AddressFamily::Unix,
+        SockType::SeqPacket,
+        None,
+        SockFlag::SOCK_CLOEXEC,
+    ) {
+        Ok(res) => Ok(res),
+        Err(_) => Err(ErrorCode::SocketError(0)),
+    }
 }

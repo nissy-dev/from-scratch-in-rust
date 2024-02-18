@@ -2,7 +2,16 @@ use std::fmt;
 
 #[derive(Debug)]
 pub enum ErrorCode {
+    ContainerError(u8),
+    NotSupported(u8),
     ArgumentInvalid(&'static str),
+    SocketError(u8),
+    ChildProcessError(u8),
+    RngError,
+    HostnameError(u8),
+    MountsError(u8),
+    NamespacesError(u8),
+    CapabilitiesError(u8),
 }
 
 impl ErrorCode {
