@@ -1,4 +1,4 @@
-use std::os::fd::RawFd;
+use std::{os::fd::RawFd, path::PathBuf};
 
 use nix::{
     sys::wait::waitpid,
@@ -6,9 +6,14 @@ use nix::{
 };
 
 use crate::{
-    check_linux_version::check_linux_version, child::generate_child_process, cli::Args,
-    config::ContainerOpts, errors::ErrorCode, mount::clean_mounts,
+    check_linux_version::check_linux_version,
+    child::generate_child_process,
+    cli::Args,
+    config::ContainerOpts,
+    errors::ErrorCode,
+    mount::clean_mounts,
     namespaces::handle_child_uid_map,
+    resources::{clean_cgroups, restrict_resources},
 };
 
 pub struct Container {
@@ -19,7 +24,21 @@ pub struct Container {
 
 impl Container {
     pub fn new(args: Args) -> Result<Self, ErrorCode> {
-        let (config, sockets) = ContainerOpts::new(args.command, args.uid, args.mount_dir)?;
+        let mut add_paths = vec![];
+        for ap_pair in args.add_paths.iter() {
+            let mut pair = ap_pair.to_str().unwrap().split(':');
+            let from_path = PathBuf::from(pair.next().unwrap())
+                .canonicalize()
+                .expect("Cannot canonicalize path")
+                .to_path_buf();
+            let mnt_path = PathBuf::from(pair.next().unwrap())
+                .strip_prefix("/")
+                .expect("Cannot strip prefix from path")
+                .to_path_buf();
+            add_paths.push((from_path, mnt_path));
+        }
+        let (config, sockets) =
+            ContainerOpts::new(args.command, args.uid, args.mount_dir, add_paths)?;
         Ok(Self {
             config,
             sockets,
@@ -29,6 +48,7 @@ impl Container {
 
     pub fn create(&mut self) -> Result<(), ErrorCode> {
         let pid = generate_child_process(self.config.clone())?;
+        restrict_resources(&self.config.hostname, pid)?;
         self.child_pid = Some(pid);
         handle_child_uid_map(pid, self.sockets.0)?;
         log::debug!("Creation finished");
@@ -48,6 +68,11 @@ impl Container {
         }
 
         clean_mounts(&self.config.mount_dir)?;
+
+        if let Err(e) = clean_cgroups(&self.config.hostname) {
+            log::error!("Cgroups cleaning failed: {}", e);
+            return Err(e);
+        }
 
         Ok(())
     }

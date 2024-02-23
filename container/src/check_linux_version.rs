@@ -16,7 +16,6 @@ pub fn check_linux_version() -> Result<(), ErrorCode> {
         return Err(ErrorCode::ContainerError(0));
     }
 
-
     // if host.machine() != "x86_64" {
     //     return Err(ErrorCode::NotSupported(1));
     // }

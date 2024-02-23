@@ -10,6 +10,7 @@ pub struct ContainerOpts {
     pub mount_dir: PathBuf,
     pub fd: RawFd,
     pub hostname: String,
+    pub add_paths: Vec<(PathBuf, PathBuf)>,
 }
 
 impl ContainerOpts {
@@ -17,6 +18,7 @@ impl ContainerOpts {
         command: String,
         uid: u32,
         mount_dir: PathBuf,
+        add_paths: Vec<(PathBuf, PathBuf)>,
     ) -> Result<(Self, (RawFd, RawFd)), ErrorCode> {
         let argv = command
             .split_ascii_whitespace()
@@ -33,6 +35,7 @@ impl ContainerOpts {
                 mount_dir,
                 fd: sockets.1.clone(),
                 hostname: generate_hostname()?,
+                add_paths,
             },
             sockets,
         ))

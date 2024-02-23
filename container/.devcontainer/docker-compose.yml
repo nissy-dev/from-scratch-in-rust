@@ -7,4 +7,6 @@ services:
     privileged: true
     volumes:
       - ../:/workspace
+      # cgroup がデフォルトだと read-only になっているために追加
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
     working_dir: /workspace

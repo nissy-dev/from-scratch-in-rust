@@ -11,7 +11,10 @@ use rand::Rng;
 
 use crate::errors::ErrorCode;
 
-pub fn set_mountpoint(mount_dir: &PathBuf) -> Result<(), ErrorCode> {
+pub fn set_mountpoint(
+    mount_dir: &PathBuf,
+    add_paths: &Vec<(PathBuf, PathBuf)>,
+) -> Result<(), ErrorCode> {
     log::debug!("Setting mount points ...");
 
     // まずは、新しい root となるディレクトリを作成する
@@ -27,6 +30,18 @@ pub fn set_mountpoint(mount_dir: &PathBuf) -> Result<(), ErrorCode> {
         &new_root,
         vec![MsFlags::MS_BIND, MsFlags::MS_PRIVATE],
     )?;
+
+    log::debug!("Mounting additionnal paths");
+    for (in_path, mnt_path) in add_paths.iter() {
+        let out_path = new_root.join(mnt_path);
+        create_directory(&out_path)?;
+        mount_directory(
+            Some(&in_path),
+            &out_path,
+            vec![MsFlags::MS_PRIVATE, MsFlags::MS_BIND],
+        )?;
+    }
+
     // root ディレクトリを変更する (元の root は /oldroot.xxxx になる)
     log::debug!("Pivoting root");
     let old_root_tail = format!("oldroot.{}", random_string(6));
@@ -47,7 +62,7 @@ pub fn set_mountpoint(mount_dir: &PathBuf) -> Result<(), ErrorCode> {
     Ok(())
 }
 
-pub fn clean_mounts(mount_dir: &PathBuf) -> Result<(), ErrorCode> {
+pub fn clean_mounts(_mount_dir: &PathBuf) -> Result<(), ErrorCode> {
     Ok(())
 }
 
