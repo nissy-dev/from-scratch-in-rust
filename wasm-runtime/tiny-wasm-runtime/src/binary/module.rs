@@ -6,20 +6,27 @@ use nom::{
     sequence::pair,
     IResult,
 };
-use nom_leb128::leb128_u32;
+use nom_leb128::{leb128_i32, leb128_u32};
 use num_traits::FromPrimitive as _;
 
 use super::{
     instruction::Instruction,
     opcode::Opcode,
     section::{Function, SectionCode},
-    types::{Export, ExportDesc, FuncType, FunctionLocal, Import, ImportDesc, ValueType},
+    types::{
+        Data, Export, ExportDesc, FuncType, FunctionLocal, Import, ImportDesc, Limits, Memory,
+        ValueType,
+    },
 };
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Module {
     pub magic: String,
     pub version: u32,
+    // メモリの設定を保持する
+    pub memory_section: Option<Vec<Memory>>,
+    // メモリの初期化データを保持する
+    pub data_section: Option<Vec<Data>>,
     // 関数の型を保持する
     pub type_section: Option<Vec<FuncType>>,
     // 関数の型と実装の対応を保持する
@@ -37,6 +44,8 @@ impl Default for Module {
         Self {
             magic: "\0asm".to_string(),
             version: 1,
+            memory_section: None,
+            data_section: None,
             type_section: None,
             function_section: None,
             code_section: None,
@@ -70,6 +79,14 @@ impl Module {
                         SectionCode::Custom => {
                             // カスタムセクションは無視する
                         }
+                        SectionCode::Memory => {
+                            let (_, memory) = decode_memory_section(section_contents)?;
+                            module.memory_section = Some(vec![memory]);
+                        }
+                        SectionCode::Data => {
+                            let (_, data) = decode_data_section(section_contents)?;
+                            module.data_section = Some(data);
+                        }
                         SectionCode::Type => {
                             let (_, types) = decode_type_section(section_contents)?;
                             module.type_section = Some(types);
@@ -90,7 +107,6 @@ impl Module {
                             let (_, imports) = decode_import_section(section_contents)?;
                             module.import_section = Some(imports);
                         }
-                        _ => todo!(),
                     };
                     remaining = rest;
                 }
@@ -207,6 +223,21 @@ fn decode_instructions(input: &[u8]) -> IResult<&[u8], Instruction> {
             let (rest, local_idx) = leb128_u32(input)?;
             (rest, Instruction::LocalGet(local_idx))
         }
+        Opcode::LocalSet => {
+            let (rest, local_idx) = leb128_u32(input)?;
+            (rest, Instruction::LocalSet(local_idx))
+        }
+        Opcode::I32Store => {
+            // アライメントはメモリの境界値チェックのために使われるが、この本では扱わない
+            let (rest, align) = leb128_u32(input)?;
+            // アドレス + オフセットの箇所に実際に値を書き込む
+            let (rest, offset) = leb128_u32(rest)?;
+            (rest, Instruction::I32Store { align, offset })
+        }
+        Opcode::I32Const => {
+            let (rest, value) = leb128_i32(input)?;
+            (rest, Instruction::I32Const(value))
+        }
         Opcode::I32Add => (input, Instruction::I32Add),
         Opcode::End => (input, Instruction::End),
         Opcode::Call => {
@@ -269,6 +300,54 @@ fn decode_name(input: &[u8]) -> IResult<&[u8], String> {
     let (input, name_bytes) = take(name_len)(input)?;
     let name = String::from_utf8(name_bytes.to_vec()).expect("invalid utf8 string");
     Ok((input, name))
+}
+
+fn decode_memory_section(input: &[u8]) -> IResult<&[u8], Memory> {
+    // メモリの数を読み取るのだが、version 1 では常に 1 なので読み取っても使わない
+    let (input, _) = leb128_u32(input)?;
+    let (_, limits) = decode_limits(input)?;
+    Ok((input, Memory { limits }))
+}
+
+fn decode_limits(input: &[u8]) -> IResult<&[u8], Limits> {
+    let (input, (flags, min)) = pair(leb128_u32, leb128_u32)(input)?;
+    let max = if flags == 0 {
+        None
+    } else {
+        let (_, max) = leb128_u32(input)?;
+        Some(max)
+    };
+    Ok((input, Limits { min, max }))
+}
+
+// offset を指定する命令列をデコードする
+// 今回は [i32.const, offset, end] の命令列になっていることを前提とする
+fn decode_expr(input: &[u8]) -> IResult<&[u8], u32> {
+    // i32.const 命令を読み取る
+    let (input, _) = leb128_u32(input)?;
+    // 実際の offset の数値が格納されているバイト列を読み取る
+    let (input, offset) = leb128_u32(input)?;
+    // end 命令を読み取る
+    let (input, _) = leb128_u32(input)?;
+    Ok((input, offset))
+}
+
+fn decode_data_section(input: &[u8]) -> IResult<&[u8], Vec<Data>> {
+    let (mut input, count) = leb128_u32(input)?;
+    let mut data = vec![];
+    for _ in 0..count {
+        let (rest, memory_idx) = leb128_u32(input)?;
+        let (rest, offset) = decode_expr(rest)?;
+        let (rest, size) = leb128_u32(rest)?;
+        let (rest, init) = take(size)(rest)?;
+        data.push(Data {
+            memory_idx,
+            offset,
+            init: init.to_vec(),
+        });
+        input = rest;
+    }
+    Ok((input, data))
 }
 
 #[cfg(test)]
@@ -474,6 +553,104 @@ mod tests {
                 ..Default::default()
             }
         );
+        Ok(())
+    }
+
+    #[test]
+    fn decode_i32_store() -> Result<()> {
+        let wasm = wat::parse_str("(module (func (i32.store offset=4 (i32.const 4))))")?;
+        let module = Module::new(&wasm)?;
+        assert_eq!(
+            module,
+            Module {
+                type_section: Some(vec![FuncType {
+                    params: vec![],
+                    results: vec![],
+                }]),
+                function_section: Some(vec![0]),
+                code_section: Some(vec![Function {
+                    locals: vec![],
+                    code: vec![
+                        Instruction::I32Const(4),
+                        Instruction::I32Store {
+                            align: 2,
+                            offset: 4
+                        },
+                        Instruction::End,
+                    ],
+                }]),
+                ..Default::default()
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn decode_memory() -> Result<()> {
+        let tests = vec![
+            ("(module (memory 1))", Limits { min: 1, max: None }),
+            (
+                "(module (memory 1 2))",
+                Limits {
+                    min: 1,
+                    max: Some(2),
+                },
+            ),
+        ];
+
+        for (wasm, limits) in tests {
+            let module = Module::new(&wat::parse_str(wasm)?)?;
+            assert_eq!(
+                module,
+                Module {
+                    memory_section: Some(vec![Memory { limits }]),
+                    ..Default::default()
+                }
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn decode_data() -> Result<()> {
+        let tests =
+            vec![
+            (
+                "(module (memory 1) (data (i32.const 0) \"hello\"))",
+                vec![Data {
+                    memory_idx: 0,
+                    offset: 0,
+                    init: "hello".as_bytes().to_vec(),
+                }],
+            ),
+            (
+                "(module (memory 1) (data (i32.const 0) \"hello\") (data (i32.const 5) \"world\"))",
+                vec![Data {
+                    memory_idx: 0,
+                    offset: 0,
+                    init: b"hello".to_vec(),
+                },
+                Data {
+                    memory_idx: 0,
+                    offset: 5,
+                    init: b"world".to_vec(),
+                }],
+            ),
+        ];
+
+        for (wasm, data) in tests {
+            let module = Module::new(&wat::parse_str(wasm)?)?;
+            assert_eq!(
+                module,
+                Module {
+                    memory_section: Some(vec![Memory {
+                        limits: Limits { min: 1, max: None }
+                    }]),
+                    data_section: Some(data),
+                    ..Default::default()
+                }
+            );
+        }
         Ok(())
     }
 }

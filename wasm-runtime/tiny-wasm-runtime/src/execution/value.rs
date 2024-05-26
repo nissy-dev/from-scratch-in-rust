@@ -4,6 +4,15 @@ pub enum Value {
     I64(i64),
 }
 
+impl From<Value> for i32 {
+    fn from(value: Value) -> Self {
+        match value {
+            Value::I32(value) => value,
+            _ => panic!("type mismatch"),
+        }
+    }
+}
+
 impl From<i32> for Value {
     fn from(value: i32) -> Self {
         Value::I32(value)

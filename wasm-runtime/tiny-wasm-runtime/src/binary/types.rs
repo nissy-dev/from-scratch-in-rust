@@ -48,3 +48,23 @@ pub struct Import {
     pub field: String,
     pub desc: ImportDesc,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Limits {
+    pub min: u32,
+    pub max: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Memory {
+    pub limits: Limits,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Data {
+    // データの配置先のメモリのインデックス
+    // version 1 ではメモリは 1 つしか扱えないので、常に 0 になる
+    pub memory_idx: u32,
+    pub offset: u32,
+    pub init: Vec<u8>,
+}
