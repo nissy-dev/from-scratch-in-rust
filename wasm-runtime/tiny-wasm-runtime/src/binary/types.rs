@@ -68,3 +68,23 @@ pub struct Data {
     pub offset: u32,
     pub init: Vec<u8>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Block {
+    pub block_type: BlockType,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BlockType {
+    ValueType(Vec<ValueType>),
+    Void,
+}
+
+impl BlockType {
+    pub fn result_count(&self) -> usize {
+        match self {
+            BlockType::ValueType(value_types) => value_types.len(),
+            BlockType::Void => 0,
+        }
+    }
+}

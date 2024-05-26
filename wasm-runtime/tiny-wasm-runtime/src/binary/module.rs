@@ -14,8 +14,8 @@ use super::{
     opcode::Opcode,
     section::{Function, SectionCode},
     types::{
-        Data, Export, ExportDesc, FuncType, FunctionLocal, Import, ImportDesc, Limits, Memory,
-        ValueType,
+        Block, BlockType, Data, Export, ExportDesc, FuncType, FunctionLocal, Import, ImportDesc,
+        Limits, Memory, ValueType,
     },
 };
 
@@ -219,6 +219,11 @@ fn decode_instructions(input: &[u8]) -> IResult<&[u8], Instruction> {
     let (input, byte) = le_u8(input)?;
     let opcode = Opcode::from_u8(byte).unwrap_or_else(|| panic!("invalid opcode: {:X}", byte));
     let (rest, instruction) = match opcode {
+        Opcode::If => {
+            let (rest, block) = decode_block(input)?;
+            (rest, Instruction::If(block))
+        }
+        Opcode::Return => (input, Instruction::Return),
         Opcode::LocalGet => {
             let (rest, local_idx) = leb128_u32(input)?;
             (rest, Instruction::LocalGet(local_idx))
@@ -238,7 +243,9 @@ fn decode_instructions(input: &[u8]) -> IResult<&[u8], Instruction> {
             let (rest, value) = leb128_i32(input)?;
             (rest, Instruction::I32Const(value))
         }
+        Opcode::I32Lts => (input, Instruction::I32Lts),
         Opcode::I32Add => (input, Instruction::I32Add),
+        Opcode::I32Sub => (input, Instruction::I32Sub),
         Opcode::End => (input, Instruction::End),
         Opcode::Call => {
             let (rest, func_idx) = leb128_u32(input)?;
@@ -348,6 +355,15 @@ fn decode_data_section(input: &[u8]) -> IResult<&[u8], Vec<Data>> {
         input = rest;
     }
     Ok((input, data))
+}
+
+fn decode_block(input: &[u8]) -> IResult<&[u8], Block> {
+    let (input, byte) = le_u8(input)?;
+    let block_type = match byte {
+        0x40 => BlockType::Void,
+        _ => BlockType::ValueType(vec![byte.into()]),
+    };
+    Ok((input, Block { block_type }))
 }
 
 #[cfg(test)]
@@ -651,6 +667,53 @@ mod tests {
                 }
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn decode_fib() -> Result<()> {
+        let wasm = wat::parse_file("src/fixtures/fib.wat")?;
+        let module = Module::new(&wasm)?;
+        assert_eq!(
+            module,
+            Module {
+                type_section: Some(vec![FuncType {
+                    params: vec![ValueType::I32],
+                    results: vec![ValueType::I32],
+                }]),
+                function_section: Some(vec![0]),
+                code_section: Some(vec![Function {
+                    locals: vec![],
+                    code: vec![
+                        Instruction::LocalGet(0),
+                        Instruction::I32Const(2),
+                        Instruction::I32Lts,
+                        Instruction::If(Block {
+                            block_type: BlockType::Void
+                        }),
+                        Instruction::I32Const(1),
+                        Instruction::Return,
+                        Instruction::End,
+                        Instruction::LocalGet(0),
+                        Instruction::I32Const(2),
+                        Instruction::I32Sub,
+                        Instruction::Call(0),
+                        Instruction::LocalGet(0),
+                        Instruction::I32Const(1),
+                        Instruction::I32Sub,
+                        Instruction::Call(0),
+                        Instruction::I32Add,
+                        Instruction::Return,
+                        Instruction::End,
+                    ],
+                }]),
+                export_section: Some(vec![Export {
+                    name: "fib".into(),
+                    desc: ExportDesc::Func(0),
+                }]),
+                ..Default::default()
+            }
+        );
         Ok(())
     }
 }

@@ -3,7 +3,7 @@ use std::mem::size_of;
 use super::{
     import::Import,
     store::{ExternalFuncInst, FuncInst, InternalFuncInst, Store},
-    value::Value,
+    value::{Label, LabelKind, Value},
     wasi::WasiSnapShotPreview1,
 };
 use crate::binary::{
@@ -20,6 +20,7 @@ pub struct Frame {
     pub insts: Vec<Instruction>,
     pub arity: usize,       // 戻り値の数
     pub locals: Vec<Value>, // ローカル変数
+    pub labels: Vec<Label>,
 }
 
 #[derive(Default)]
@@ -66,7 +67,44 @@ impl Runtime {
                 break;
             };
             match inst {
-                Instruction::End => {
+                Instruction::If(block) => {
+                    let cond = self.stack.pop().ok_or(anyhow!("not found condition."))?;
+
+                    // if の終わりの program counter を取得
+                    let next_pc = get_end_address(&frame.insts, frame.pc as usize)?;
+                    // cond が 0 のとき = false のときなので、pc を next_pc に移動させる
+                    if cond == Value::I32(0) {
+                        frame.pc = next_pc as isize;
+                    }
+
+                    let label = Label {
+                        kind: LabelKind::If,
+                        pc: next_pc,
+                        sp: self.stack.len(),
+                        arity: block.block_type.result_count(),
+                    };
+                    frame.labels.push(label);
+                }
+                Instruction::End => match frame.labels.pop() {
+                    // if / block / loop の終わり
+                    Some(label) => {
+                        let Label { pc, sp, arity, .. } = label;
+                        // program counter を移動させて、スタックを戻す
+                        // 関数呼び出しではないので、call stack は変更しない
+                        frame.pc = pc as isize;
+                        stack_unwind(&mut self.stack, sp, arity)?;
+                    }
+                    // 関数の終わり
+                    None => {
+                        let Some(frame) = self.call_stack.pop() else {
+                            bail!("not found frame.")
+                        };
+                        let Frame { sp, arity, .. } = frame;
+                        stack_unwind(&mut self.stack, sp, arity)?;
+                    }
+                },
+                Instruction::Return => {
+                    // return は必ず関数の終わりなので、call stack から frame を取り出す
                     let Some(frame) = self.call_stack.pop() else {
                         bail!("not found frame.")
                     };
@@ -113,6 +151,20 @@ impl Runtime {
                     };
                     let result = left + right;
                     self.stack.push(result);
+                }
+                Instruction::I32Sub => {
+                    let (Some(right), Some(left)) = (self.stack.pop(), self.stack.pop()) else {
+                        bail!("not found any value in the stack.")
+                    };
+                    let result = left - right;
+                    self.stack.push(result);
+                }
+                Instruction::I32Lts => {
+                    let (Some(right), Some(left)) = (self.stack.pop(), self.stack.pop()) else {
+                        bail!("not found any value in the stack.")
+                    };
+                    let result = left < right;
+                    self.stack.push(Value::I32(result.into()));
                 }
                 Instruction::Call(idx) => {
                     let Some(func) = self.store.funcs.get(*idx as usize) else {
@@ -193,6 +245,7 @@ impl Runtime {
             insts: func.code.body.clone(),
             arity,
             locals,
+            labels: vec![],
         };
 
         self.call_stack.push(frame);
@@ -255,6 +308,26 @@ pub fn stack_unwind(stack: &mut Vec<Value>, sp: usize, arity: usize) -> Result<(
         stack.drain(sp..);
     }
     Ok(())
+}
+
+pub fn get_end_address(insts: &[Instruction], pc: usize) -> Result<usize> {
+    let mut pc = pc;
+    let mut depth = 0;
+    loop {
+        pc += 1;
+        let inst = insts.get(pc).ok_or(anyhow!("not found instruction."))?;
+        match inst {
+            // if がネストしている場合があるので、depth を使って終了を判断する
+            Instruction::If(_) => depth += 1,
+            Instruction::End => {
+                if depth == 0 {
+                    return Ok(pc);
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
 }
 
 #[cfg(test)]
@@ -353,6 +426,49 @@ mod tests {
         runtime.call("i32_store", vec![])?;
         let memory = &runtime.store.memories[0].data;
         assert_eq!(memory[0], 42);
+        Ok(())
+    }
+
+    #[test]
+    fn i32_sub() -> Result<()> {
+        let wasm = wat::parse_file("src/fixtures/func_sub.wat")?;
+        let mut runtime = Runtime::instantiate(&wasm)?;
+        let result = runtime.call("sub", vec![Value::I32(10), Value::I32(5)])?;
+        assert_eq!(result, Some(Value::I32(5)));
+        Ok(())
+    }
+
+    #[test]
+    fn i32_lts() -> Result<()> {
+        let wasm = wat::parse_file("src/fixtures/func_lts.wat")?;
+        let mut runtime = Runtime::instantiate(&wasm)?;
+        let result = runtime.call("lts", vec![Value::I32(10), Value::I32(5)])?;
+        assert_eq!(result, Some(Value::I32(0)));
+        Ok(())
+    }
+
+    #[test]
+    fn fib() -> Result<()> {
+        let wasm = wat::parse_file("src/fixtures/fib.wat")?;
+        let mut runtime = Runtime::instantiate(wasm)?;
+        let tests = vec![
+            (1, 1),
+            (2, 2),
+            (3, 3),
+            (4, 5),
+            (5, 8),
+            (6, 13),
+            (7, 21),
+            (8, 34),
+            (9, 55),
+            (10, 89),
+        ];
+
+        for (arg, want) in tests {
+            let args = vec![Value::I32(arg)];
+            let result = runtime.call("fib", args)?;
+            assert_eq!(result, Some(Value::I32(want)));
+        }
         Ok(())
     }
 }
