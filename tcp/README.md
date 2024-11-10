@@ -1,4 +1,3 @@
-# toy-tcp
+# microps
 
-Rustで始めるTCP自作入門: https://www.amazon.co.jp/dp/B09FG2SL2S
-
+TCP/IPプロトコルスタック自作開発: https://github.com/pandax381/microps
