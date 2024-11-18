@@ -7,16 +7,15 @@ use nix::sys::socket::{
     bind, recvfrom, sendto, socket, AddressFamily, LinkAddr, MsgFlags, SockFlag, SockProtocol,
     SockType, SockaddrLike, SockaddrStorage,
 };
-use nix::unistd::close;
 use std::{net::Ipv4Addr, os::fd::AsRawFd};
-use tracing::debug;
+use tracing::info;
 
 pub struct Arp {}
 
 impl Arp {
     pub fn send(dst_ip_addr: Ipv4Addr, src_net_interface: NetworkInterface) -> Option<ArpFrame> {
         // socket の作成
-        debug!("create raw socket....");
+        info!("create raw socket....");
         let sock_fd = socket(
             AddressFamily::Packet,
             SockType::Raw,
@@ -24,13 +23,16 @@ impl Arp {
             SockProtocol::EthAll,
         )
         .expect("failed to create a socket");
+        let sock_raw_fd = sock_fd.as_raw_fd();
 
         // socket にアドレスを紐づけて、受け取るパケットを制限する
         // これをしないと全てのアドレスからパケットを受け取ってしまう
         // https://man7.org/linux/man-pages/man7/packet.7.html
         let sockaddr = &nix::libc::sockaddr_ll {
             sll_family: nix::libc::AF_PACKET as u16,
-            sll_protocol: nix::libc::ETH_P_ARP as u16,
+            // ETH_P_ALL=0x0806 なので、big edian に変換しないと packet を receive できなかった
+            // https://thomask.sdf.org/blog/2017/09/01/layer-2-raw-sockets-on-rustlinux.html
+            sll_protocol: (nix::libc::ETH_P_ARP as u16).to_be(),
             sll_ifindex: src_net_interface.ifindex(),
             sll_hatype: 0,
             sll_pkttype: 0,
@@ -44,8 +46,8 @@ impl Arp {
             )
             .expect("failed to create link address")
         };
-        debug!("bind sll_address to the socket....");
-        bind(sock_fd.as_raw_fd(), &sock_addr).expect("failed to bind sll_address to packet");
+        info!("bind sll_address to the socket....");
+        bind(sock_raw_fd, &sock_addr).expect("failed to bind sll_address to packet");
 
         // 送信するパケットの準備
         let ethernet_frame = EthernetFrame::new(
@@ -63,23 +65,21 @@ impl Arp {
         packet.extend(arp_req_frame.to_bytes());
 
         // パケットの送信
-        debug!("send the socket....");
-        sendto(sock_fd.as_raw_fd(), &packet, &sock_addr, MsgFlags::empty())
-            .expect("failed to send the arp socket");
+        info!("send the packet....");
+        sendto(sock_raw_fd, &packet, &sock_addr, MsgFlags::empty())
+            .expect("failed to send the arp packet");
 
         // パケットの受信
-        debug!("receive the socket....");
+        info!("start receiving the packet....");
         let mut recv_buf = vec![0; 4096];
-        while let Ok((_ret, _addr)) =
-            recvfrom::<SockaddrStorage>(sock_fd.as_raw_fd(), &mut recv_buf)
-        {
+        while let Ok((ret, _addr)) = recvfrom::<SockaddrStorage>(sock_raw_fd, &mut recv_buf) {
+            info!("received packet length: {}", ret);
             if !recv_buf.is_empty() && Arp::is_arp_reply_packet(&recv_buf) {
-                debug!("found arp reply packet....");
-                close(sock_fd.as_raw_fd()).expect("failed to close a socket connection");
+                info!("found an arp reply packet...");
                 return Some(ArpFrame::from_bytes(&recv_buf[14..]));
             }
         }
-
+        info!("end");
         None
     }
 
@@ -134,7 +134,7 @@ impl ArpFrame {
         bytes.extend(self.src_mac_addr.octets());
         bytes.extend(self.src_ip_addr.octets());
         bytes.extend(self.dst_mac_addr.octets());
-        bytes.extend(self.dst_mac_addr.octets());
+        bytes.extend(self.dst_ip_addr.octets());
         bytes
     }
 

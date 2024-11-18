@@ -1,5 +1,7 @@
 use std::net::Ipv4Addr;
 
+use tracing::info;
+
 use crate::address::MacAddr;
 
 #[derive(Debug)]
@@ -11,28 +13,39 @@ pub struct NetworkInterface {
 
 impl NetworkInterface {
     pub fn new(name: &str) -> Option<NetworkInterface> {
+        let mut mac_addr = None;
+        let mut ip_addr = None;
+        let mut ifindex = None;
         let addrs = nix::ifaddrs::getifaddrs().unwrap();
         for ifaddr in addrs {
             if ifaddr.interface_name == name {
                 if let Some(storage) = ifaddr.address {
-                    match (storage.as_link_addr(), storage.as_sockaddr_in()) {
-                        (Some(link_addr), Some(sock_addr)) => {
-                            let octets = link_addr.addr().unwrap();
-                            let mac_addr = MacAddr::new(
+                    if let Some(link_addr) = storage.as_link_addr() {
+                        ifindex = Some(link_addr.ifindex());
+                        if let Some(octets) = link_addr.addr() {
+                            mac_addr = Some(MacAddr::new(
                                 octets[0], octets[1], octets[2], octets[3], octets[4], octets[5],
-                            );
-                            return Some(NetworkInterface {
-                                mac_addr,
-                                ip_addr: sock_addr.ip(),
-                                ifindex: link_addr.ifindex(),
-                            });
+                            ));
                         }
-                        _ => return None,
+                    }
+                    if let Some(sock_addr) = storage.as_sockaddr_in() {
+                        ip_addr = Some(sock_addr.ip());
                     }
                 }
             }
         }
-        None
+        info!(
+            "mac_addr='{:?}', ip_addr='{:?}', ifindex='{:?}'",
+            mac_addr?, ip_addr?, ifindex?
+        );
+        match (mac_addr, ip_addr, ifindex) {
+            (Some(mac_addr), Some(ip_addr), Some(ifindex)) => Some(NetworkInterface {
+                mac_addr,
+                ip_addr,
+                ifindex,
+            }),
+            _ => None,
+        }
     }
 
     pub fn ifindex(&self) -> i32 {

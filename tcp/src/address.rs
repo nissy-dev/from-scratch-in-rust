@@ -1,7 +1,7 @@
 use core::str;
 use std::fmt;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct MacAddr {
     octets: [u8; 6],
 }
@@ -42,5 +42,11 @@ impl fmt::Display for MacAddr {
             self.octets[4],
             self.octets[5],
         ))
+    }
+}
+
+impl fmt::Debug for MacAddr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self)
     }
 }
