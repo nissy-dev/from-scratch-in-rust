@@ -1,7 +1,7 @@
 use core::str;
 use std::fmt;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct MacAddr {
     octets: [u8; 6],
 }
@@ -24,10 +24,8 @@ impl From<&str> for MacAddr {
     // TODO: MacAddress はハイフンでつなげる場合もある
     fn from(value: &str) -> MacAddr {
         let mut mac_addr = [0; 6];
-        let mut i = 0;
-        for byte in value.split(':') {
+        for (i, byte) in value.split(':').enumerate() {
             mac_addr[i] = u8::from_str_radix(byte, 16).expect("invalid mac address");
-            i += 1;
         }
         MacAddr { octets: mac_addr }
     }

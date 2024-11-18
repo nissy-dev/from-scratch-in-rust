@@ -8,7 +8,7 @@ pub enum EthernetType {
 const IPV4: [u8; 2] = [0x08, 0x00];
 const ARP: [u8; 2] = [0x08, 0x06];
 
-struct EthernetFrame {
+pub struct EthernetFrame {
     dst_mac_addr: MacAddr,
     src_mac_addr: MacAddr,
     frame_type: [u8; 2],
