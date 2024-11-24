@@ -1,0 +1,15 @@
+{
+  "name": "tcp-from-nic",
+  "dockerComposeFile": ["./docker-compose.yml"],
+  "service": "ubuntu",
+  "remoteUser": "root",
+  "workspaceFolder": "/var/lib/tcp-ip",
+  "customizations": {
+    "vscode": {
+      "extensions": ["rust-lang.rust-analyzer"],
+      "settings": {
+        "editor.formatOnSave": true
+      }
+    }
+  }
+}
