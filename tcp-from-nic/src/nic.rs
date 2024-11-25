@@ -19,7 +19,7 @@ struct IfReq {
 
 #[derive(Debug)]
 pub struct Packet {
-    data: Vec<u8>,
+    pub data: Vec<u8>,
     length: usize,
 }
 
