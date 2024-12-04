@@ -4,6 +4,7 @@ use tracing::info;
 
 mod ip;
 mod nic;
+mod tcp;
 
 fn main() {
     tracing_subscriber::fmt::init();
@@ -16,7 +17,6 @@ fn main() {
             loop {
                 let packet = nic.read();
                 info!("received packet: {:?}", packet);
-                nic.write(packet);
             }
         }
         "ip" => {
@@ -26,7 +26,20 @@ fn main() {
             ip.manage_queue(nic);
             loop {
                 let packet = ip.read();
-                info!("IP header: {:?}", packet.header);
+                info!("IP header: {:?}", packet.ip_header);
+            }
+        }
+        "tcp" => {
+            let nic = Arc::new(nic::NetDevice::new());
+            nic.bind();
+            let ip = Arc::new(ip::IpPacketManager::new());
+            ip.manage_queue(nic);
+            let tcp = tcp::TcpPacketManager::new();
+            tcp.manage_queue(ip);
+            tcp.listen();
+            loop {
+                let conn = tcp.accept();
+                info!("TCP connection: {:?}", conn);
             }
         }
         _ => (),

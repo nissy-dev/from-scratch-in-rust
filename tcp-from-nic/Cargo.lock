@@ -157,6 +157,7 @@ dependencies = [
 name = "tcp-from-nic"
 version = "0.1.0"
 dependencies = [
+ "bitflags",
  "crossbeam-channel",
  "nix",
  "tracing",

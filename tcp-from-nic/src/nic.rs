@@ -7,8 +7,12 @@ use std::thread;
 use std::{fs::File, os::fd::AsRawFd};
 use tracing::info;
 
+// https://github.com/torvalds/linux/blob/7eef7e306d3c40a0c5b9ff6adc9b273cc894dbd5/include/uapi/linux/if_tun.h#L34
 const TUNSETIFF: u64 = 0x400454ca;
+// https://github.com/torvalds/linux/blob/7eef7e306d3c40a0c5b9ff6adc9b273cc894dbd5/include/uapi/linux/if_tun.h#L66
 const IFF_TUN: u16 = 0x0001;
+// https://github.com/torvalds/linux/blob/7eef7e306d3c40a0c5b9ff6adc9b273cc894dbd5/include/uapi/linux/if_tun.h#L72
+// パケットの先頭に追加のメタデータ (Packet Information, PI) を付与しない
 const IFF_NO_PI: u16 = 0x1000;
 
 #[repr(C)]
@@ -20,7 +24,6 @@ struct IfReq {
 #[derive(Debug)]
 pub struct Packet {
     pub data: Vec<u8>,
-    length: usize,
 }
 
 type Channel = (Sender<Packet>, Receiver<Packet>);
@@ -73,17 +76,20 @@ impl NetDevice {
                 read(read_file.as_raw_fd(), &mut buffer).expect("failed to read from TUN device");
             let packet = Packet {
                 data: buffer[..length].to_vec(),
-                length,
             };
             let (in_sender, _) = incoming_queue.as_ref();
-            in_sender.send(packet).expect("failed to send packet");
+            in_sender
+                .send(packet)
+                .expect("failed to send packet in bind");
         });
 
         let write_file = self.file.clone();
         let outgoing_queue = self.outgoing_queue.clone();
         thread::spawn(move || loop {
             let (_, out_receiver) = outgoing_queue.as_ref();
-            let packet = out_receiver.recv().expect("failed to receive packet");
+            let packet = out_receiver
+                .recv()
+                .expect("failed to receive packet in bind");
             info!("write packet to TUN device");
             write(write_file.as_fd(), &packet.data).expect("failed to write to TUN device");
         });
