@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use tracing::info;
 
+mod http;
 mod ip;
 mod nic;
 mod tcp;
@@ -40,6 +41,9 @@ fn main() {
             loop {
                 let conn = tcp.accept();
                 info!("TCP connection: {:?}", conn);
+                // let flag = tcp::HeaderFlags::ACK;
+                // let data = vec![0; 10];
+                // tcp.write(&mut conn, flag, data);
             }
         }
         _ => (),

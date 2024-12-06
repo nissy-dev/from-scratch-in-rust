@@ -36,7 +36,7 @@ const TCP_HEADER_LENGTH: usize = 20;
 
 bitflags! {
   #[derive(Debug, Clone, Copy, PartialEq)]
-  struct HeaderFlags: u8 {
+  pub struct HeaderFlags: u8 {
       const FIN = 1;
       const SYN = 1 << 1;
       const RST = 1 << 2;
@@ -48,7 +48,7 @@ bitflags! {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct TcpHeader {
     src_port: u16,
     dst_port: u16,
@@ -201,7 +201,7 @@ impl TcpHeader {
 //      ------------------------>|TIME WAIT|------------------>| CLOSED  |
 //                               +---------+                   +---------+
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TcpPacket {
     ip_header: IpHeader,
     tcp_header: TcpHeader,
@@ -214,6 +214,28 @@ pub struct Connection {
     dst_port: u16,
     state: ConnectionState,
     next_seq_num: u32,
+    incoming_ip_header: IpHeader,
+    incoming_tcp_header: TcpHeader,
+    incoming_packet_length: u32,
+}
+
+impl Connection {
+    pub fn new(
+        src_port: u16,
+        dst_port: u16,
+        incoming_ip_header: IpHeader,
+        incoming_tcp_header: TcpHeader,
+    ) -> Connection {
+        Connection {
+            src_port,
+            dst_port,
+            incoming_ip_header,
+            incoming_tcp_header,
+            state: ConnectionState::Listen,
+            next_seq_num: 0,
+            incoming_packet_length: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -247,8 +269,22 @@ impl ConnectionManager {
             .expect("failed to receive tcp packet in receive_handler");
 
         // コネクションが存在するか確認し、存在しない場合は新規作成する
-        self.ensure_connection_exsists(&incoming_packet);
         let mut connections = self.connections.lock().unwrap();
+        // Close したコネクションを削除する
+        connections.retain(|c| c.state != ConnectionState::Closed);
+        // コネクションが存在するか確認し、存在しない場合は新規作成する
+        let conn = connections.iter().find(|c| {
+            c.src_port == incoming_packet.tcp_header.src_port
+                && c.dst_port == incoming_packet.tcp_header.dst_port
+        });
+        if conn.is_none() {
+            connections.push(Connection::new(
+                incoming_packet.tcp_header.src_port,
+                incoming_packet.tcp_header.dst_port,
+                incoming_packet.ip_header,
+                incoming_packet.tcp_header,
+            ));
+        }
         let connection = connections
             .iter_mut()
             .find(|c| {
@@ -257,19 +293,18 @@ impl ConnectionManager {
             })
             .expect("failed to find connection");
 
+        // 受信したパッケットに関する情報の更新
+        connection.incoming_ip_header = incoming_packet.ip_header;
+        connection.incoming_tcp_header = incoming_packet.tcp_header;
+        connection.incoming_packet_length = incoming_packet.packet.data.len() as u32;
+
         let flag = incoming_packet.tcp_header.flag;
         let (sender, _) = outgoing_queue;
         info!("connection state: {:?}, flag: {:?}", connection.state, flag);
         match flag {
             _ if flag.contains(HeaderFlags::SYN) && connection.state == ConnectionState::Listen => {
                 info!("received SYN packet...");
-                self.send_packet(
-                    sender,
-                    connection,
-                    &incoming_packet,
-                    HeaderFlags::SYN | HeaderFlags::ACK,
-                    &[],
-                );
+                self.send_packet(sender, connection, HeaderFlags::SYN | HeaderFlags::ACK, &[]);
                 connection.state = ConnectionState::SynReceived;
             }
             _ if flag.contains(HeaderFlags::ACK)
@@ -282,7 +317,7 @@ impl ConnectionManager {
                 && connection.state == ConnectionState::Established =>
             {
                 info!("received PSH packet...");
-                self.send_packet(sender, connection, &incoming_packet, HeaderFlags::ACK, &[]);
+                self.send_packet(sender, connection, HeaderFlags::ACK, &[]);
                 let (sender, _) = &self.accpted_connections;
                 sender
                     .send(*connection)
@@ -292,18 +327,12 @@ impl ConnectionManager {
                 && connection.state == ConnectionState::Established =>
             {
                 info!("received FIN packet...");
-                self.send_packet(sender, connection, &incoming_packet, HeaderFlags::ACK, &[]);
+                self.send_packet(sender, connection, HeaderFlags::ACK, &[]);
                 connection.state = ConnectionState::CloseWait;
 
                 // RFC を読むと FIN パケットを送るように書いてあるが、FIN/ACK を送ることが想定されているらしい
                 // cf: https://kawasin73.hatenablog.com/entry/2019/08/31/153809
-                self.send_packet(
-                    sender,
-                    connection,
-                    &incoming_packet,
-                    HeaderFlags::FIN | HeaderFlags::ACK,
-                    &[],
-                );
+                self.send_packet(sender, connection, HeaderFlags::FIN | HeaderFlags::ACK, &[]);
                 connection.state = ConnectionState::LastAck;
             }
             _ if flag.contains(HeaderFlags::ACK)
@@ -319,56 +348,37 @@ impl ConnectionManager {
         }
     }
 
-    pub fn ensure_connection_exsists(&self, tcp_packet: &TcpPacket) {
-        let mut connections = self.connections.lock().unwrap();
-        // Close したコネクションを削除する
-        connections.retain(|c| c.state != ConnectionState::Closed);
-
-        // コネクションが存在するか確認し、存在しない場合は新規作成する
-        let conn = connections.iter().find(|c| {
-            c.src_port == tcp_packet.tcp_header.src_port
-                && c.dst_port == tcp_packet.tcp_header.dst_port
-        });
-        if conn.is_none() {
-            connections.push(Connection {
-                src_port: tcp_packet.tcp_header.src_port,
-                dst_port: tcp_packet.tcp_header.dst_port,
-                next_seq_num: 0,
-                state: ConnectionState::Listen,
-            });
-        }
-    }
-
     pub fn send_packet(
         &self,
         packet_sender: &Sender<TcpPacket>,
         connection: &mut Connection,
-        incoming_packet: &TcpPacket,
         outgoing_packet_flag: HeaderFlags,
         outgoing_packet_data: &[u8],
     ) {
         // IP ヘッダーの生成
+        let incoming_ip_header = connection.incoming_ip_header;
         let ip_header = IpHeader::new(
-            incoming_packet.ip_header.dst_ip,
-            incoming_packet.ip_header.src_ip,
+            incoming_ip_header.dst_ip,
+            incoming_ip_header.src_ip,
             TCP_HEADER_LENGTH + outgoing_packet_data.len(),
         );
 
-        // TCP ヘッダーの生成
-        let increment_ack_num = (if outgoing_packet_flag.contains(HeaderFlags::SYN)
-            || outgoing_packet_flag.contains(HeaderFlags::FIN)
+        let incoming_tcp_header = connection.incoming_tcp_header;
+        let increment_ack_num = (if incoming_tcp_header.flag.contains(HeaderFlags::SYN)
+            || incoming_tcp_header.flag.contains(HeaderFlags::FIN)
         {
             1
         } else {
-            incoming_packet.packet.data.len()
-                - (incoming_packet.ip_header.ihl * 4) as usize
-                - (incoming_packet.tcp_header.data_offset * 4) as usize
+            connection.incoming_packet_length
+                - (incoming_ip_header.ihl * 4) as u32
+                - (incoming_tcp_header.data_offset * 4) as u32
         }) as u32;
+        // TCP ヘッダーの生成
         let tcp_header = TcpHeader::new(
-            incoming_packet.tcp_header.dst_port,
-            incoming_packet.tcp_header.src_port,
+            connection.incoming_tcp_header.dst_port,
+            connection.incoming_tcp_header.src_port,
             connection.next_seq_num,
-            incoming_packet.tcp_header.seq_num + increment_ack_num,
+            incoming_tcp_header.seq_num + increment_ack_num,
             outgoing_packet_flag,
         );
 
@@ -471,5 +481,11 @@ impl TcpPacketManager {
         receiver
             .recv()
             .expect("failed to receive connection in accept")
+    }
+
+    pub fn write(&self, connection: &mut Connection, flag: HeaderFlags, data: &[u8]) {
+        let connection_manager = self.connection_manager.as_ref();
+        let (sender, _) = self.outgoing_queue.as_ref();
+        connection_manager.send_packet(sender, connection, flag, data);
     }
 }

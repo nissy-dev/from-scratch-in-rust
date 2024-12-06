@@ -21,7 +21,7 @@ struct IfReq {
     ifr_flags: u16,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Packet {
     pub data: Vec<u8>,
 }

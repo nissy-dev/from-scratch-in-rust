@@ -25,7 +25,7 @@ const HEADER_MIN_LEN: usize = 20;
 // |                    (Options)                    |  (Padding)  |
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct IpHeader {
     version: u8,
     // Internet Header Length (IHL)：ヘッダの長さ
