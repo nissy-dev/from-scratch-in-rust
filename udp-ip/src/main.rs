@@ -1,11 +1,11 @@
 use std::net::Ipv4Addr;
-
 use tracing::info;
 
 mod address;
 mod arp;
 mod ethernet;
 mod net;
+mod socket;
 
 fn main() {
     tracing_subscriber::fmt::init();
@@ -25,7 +25,8 @@ fn main() {
             let reply =
                 arp::Arp::send(dst_ip_addr, src_net_interface).expect("missing reply arp frame");
             info!("reply arp frame: {:?}", &reply);
+            info!("arp test is successful!!")
         }
-        _ => (),
+        _ => {}
     }
 }

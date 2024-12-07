@@ -1,0 +1,9 @@
+{
+  "rust-analyzer.linkedProjects": [
+    "/workspaces/from-scratch-in-rust/udp-ip/Cargo.toml"
+  ],
+  "[rust]": {
+    "editor.defaultFormatter": "rust-lang.rust-analyzer",
+    "editor.formatOnSave": true,
+  }
+}

@@ -3,6 +3,8 @@
 # -e -o pipefail: Fail on when happening command errors
 set -ueo pipefail
 
+
+
 # 名前空間の作成
 sudo ip netns add host1
 sudo ip netns add host2

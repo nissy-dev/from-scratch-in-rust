@@ -1,8 +1,6 @@
-use std::net::Ipv4Addr;
-
-use tracing::info;
-
 use crate::address::MacAddr;
+use std::net::Ipv4Addr;
+use tracing::info;
 
 #[derive(Debug)]
 pub struct NetworkInterface {

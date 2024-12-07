@@ -2,53 +2,15 @@ use crate::{
     address::{MacAddr, BROADCAST_MAC_ADDR},
     ethernet::{EthernetFrame, EthernetType},
     net::NetworkInterface,
+    socket,
 };
-use nix::sys::socket::{
-    bind, recvfrom, sendto, socket, AddressFamily, LinkAddr, MsgFlags, SockFlag, SockProtocol,
-    SockType, SockaddrLike, SockaddrStorage,
-};
-use std::{net::Ipv4Addr, os::fd::AsRawFd};
+use std::net::Ipv4Addr;
 use tracing::info;
 
 pub struct Arp {}
 
 impl Arp {
     pub fn send(dst_ip_addr: Ipv4Addr, src_net_interface: NetworkInterface) -> Option<ArpFrame> {
-        // socket の作成
-        info!("create raw socket....");
-        let sock_fd = socket(
-            AddressFamily::Packet,
-            SockType::Raw,
-            SockFlag::empty(),
-            SockProtocol::EthAll,
-        )
-        .expect("failed to create a socket");
-        let sock_raw_fd = sock_fd.as_raw_fd();
-
-        // socket にアドレスを紐づけて、受け取るパケットを制限する
-        // これをしないと全てのアドレスからパケットを受け取ってしまう
-        // https://man7.org/linux/man-pages/man7/packet.7.html
-        let sockaddr = &nix::libc::sockaddr_ll {
-            sll_family: nix::libc::AF_PACKET as u16,
-            // ETH_P_ALL=0x0806 なので、big edian に変換しないと packet を receive できなかった
-            // https://thomask.sdf.org/blog/2017/09/01/layer-2-raw-sockets-on-rustlinux.html
-            sll_protocol: (nix::libc::ETH_P_ARP as u16).to_be(),
-            sll_ifindex: src_net_interface.ifindex(),
-            sll_hatype: 0,
-            sll_pkttype: 0,
-            sll_halen: src_net_interface.sll_halen(),
-            sll_addr: src_net_interface.sll_addr(),
-        };
-        let sock_addr = unsafe {
-            LinkAddr::from_raw(
-                sockaddr as *const nix::libc::sockaddr_ll as *const nix::libc::sockaddr,
-                None,
-            )
-            .expect("failed to create link address")
-        };
-        info!("bind sll_address to the socket....");
-        bind(sock_raw_fd, &sock_addr).expect("failed to bind sll_address to packet");
-
         // 送信するパケットの準備
         let ethernet_frame = EthernetFrame::new(
             EthernetType::Arp,
@@ -60,26 +22,20 @@ impl Arp {
             src_net_interface.mac_addr,
             src_net_interface.ip_addr,
         );
-        let mut packet = Vec::new();
-        packet.extend(ethernet_frame.to_bytes());
-        packet.extend(arp_req_frame.to_bytes());
+        let mut send_packet = Vec::new();
+        send_packet.extend(ethernet_frame.to_bytes());
+        send_packet.extend(arp_req_frame.to_bytes());
 
-        // パケットの送信
-        info!("send the packet....");
-        sendto(sock_raw_fd, &packet, &sock_addr, MsgFlags::empty())
-            .expect("failed to send the arp packet");
-
-        // パケットの受信
-        info!("start receiving the packet....");
-        let mut recv_buf = vec![0; 4096];
-        while let Ok((ret, _addr)) = recvfrom::<SockaddrStorage>(sock_raw_fd, &mut recv_buf) {
-            info!("received packet length: {}", ret);
-            if !recv_buf.is_empty() && Arp::is_arp_reply_packet(&recv_buf) {
+        // パケットの送受信
+        let mut recv_packet = vec![0; 4096];
+        while let Ok((ret, _addr)) =
+            socket::send_and_recv(&src_net_interface, &send_packet, &mut recv_packet)
+        {
+            if !recv_packet.is_empty() && Arp::is_arp_reply_packet(&recv_packet) {
                 info!("found an arp reply packet...");
-                return Some(ArpFrame::from_bytes(&recv_buf[14..]));
+                return Some(ArpFrame::from_bytes(&recv_packet[14..]));
             }
         }
-        info!("end");
         None
     }
 
@@ -110,11 +66,11 @@ impl ArpFrame {
         src_ip_addr: Ipv4Addr,
     ) -> Self {
         ArpFrame {
-            hardware_type: 0x0001, // ethernet
+            hardware_type: 0x0001, // Ethernet
             protocol_type: 0x0800, // IPv4
-            hardware_size: 0x06,
-            protocol_size: 0x04,
-            opcode: 0x0001, // ARP request
+            hardware_size: 0x06,   // mac address は 6 bytes
+            protocol_size: 0x04,   // IP address は 4 bytes
+            opcode: 0x0001,        // ARP request
             src_mac_addr,
             src_ip_addr,
             dst_mac_addr: BROADCAST_MAC_ADDR,

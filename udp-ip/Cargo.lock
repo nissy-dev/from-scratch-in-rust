@@ -149,7 +149,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "toytcp"
+name = "toy-protocol"
 version = "0.1.0"
 dependencies = [
  "nix",
