@@ -26,14 +26,16 @@ impl Arp {
         send_packet.extend(ethernet_frame.to_bytes());
         send_packet.extend(arp_req_frame.to_bytes());
 
+        let (sender, mut reciever) = socket::channel(&src_net_interface);
+        info!("send the arp packet...");
+        sender.sendto(send_packet);
+
         // パケットの送受信
-        let mut recv_packet = vec![0; 4096];
-        while let Ok((ret, _addr)) =
-            socket::send_and_recv(&src_net_interface, &send_packet, &mut recv_packet)
-        {
-            if !recv_packet.is_empty() && Arp::is_arp_reply_packet(&recv_packet) {
+        info!("receive the arp packet...");
+        while let Ok((_ret, _addr)) = reciever.recvfrom() {
+            if !reciever.buf.is_empty() && Arp::is_arp_reply_packet(&reciever.buf) {
                 info!("found an arp reply packet...");
-                return Some(ArpFrame::from_bytes(&recv_packet[14..]));
+                return Some(ArpFrame::from_bytes(&reciever.buf[14..]));
             }
         }
         None
