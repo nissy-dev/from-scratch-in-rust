@@ -41,9 +41,23 @@ fn main() {
             loop {
                 let conn = tcp.accept();
                 info!("TCP connection: {:?}", conn);
-                // let flag = tcp::HeaderFlags::ACK;
-                // let data = vec![0; 10];
-                // tcp.write(&mut conn, flag, data);
+            }
+        }
+        "http" => {
+            let server = http::Server::new();
+            server.listen();
+            loop {
+                let conn = &mut server.accept();
+                let req = http::HttpRequest::parse(&conn.1.payload());
+                info!("request: {:?}", req);
+                match (req.method.as_str(), req.uri.as_str()) {
+                    ("GET", "/") => {
+                        let res_body = "Hello, World!\r\n";
+                        let res = http::HttpResponse::new(http::StatusCode::OK, res_body);
+                        server.write(conn, res.to_bytes().as_slice());
+                    }
+                    _ => (),
+                }
             }
         }
         _ => (),
