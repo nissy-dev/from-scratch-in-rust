@@ -1,5 +1,7 @@
 use crate::address::MacAddr;
 
+pub const ETHERNET_FRAME_LENGTH: usize = 14;
+
 pub enum EthernetType {
     Ipv4,
     Arp,

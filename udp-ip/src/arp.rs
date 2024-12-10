@@ -1,6 +1,6 @@
 use crate::{
     address::{MacAddr, BROADCAST_MAC_ADDR},
-    ethernet::{EthernetFrame, EthernetType},
+    ethernet::{EthernetFrame, EthernetType, ETHERNET_FRAME_LENGTH},
     net::NetworkInterface,
     socket,
 };
@@ -10,7 +10,7 @@ use tracing::info;
 pub struct Arp {}
 
 impl Arp {
-    pub fn send(dst_ip_addr: Ipv4Addr, src_net_interface: NetworkInterface) -> Option<ArpFrame> {
+    pub fn send(dst_ip_addr: Ipv4Addr, src_net_interface: &NetworkInterface) -> Option<ArpFrame> {
         // 送信するパケットの準備
         let ethernet_frame = EthernetFrame::new(
             EthernetType::Arp,
@@ -35,7 +35,8 @@ impl Arp {
         while let Ok((_ret, _addr)) = reciever.recvfrom() {
             if !reciever.buf.is_empty() && Arp::is_arp_reply_packet(&reciever.buf) {
                 info!("found an arp reply packet...");
-                return Some(ArpFrame::from_bytes(&reciever.buf[14..]));
+                let offset = ETHERNET_FRAME_LENGTH;
+                return Some(ArpFrame::from_bytes(&reciever.buf[offset..]));
             }
         }
         None
