@@ -1,3 +1,4 @@
+use crate::checksum;
 use std::net::Ipv4Addr;
 
 // 基本は 20 byte だが、オプションフィールドがある場合はそれが追加される
@@ -27,8 +28,8 @@ pub struct IpHeader {
     ttl: u8,
     protocol: u8,
     checksum: u16,
-    src_ip: Ipv4Addr,
-    dst_ip: Ipv4Addr,
+    pub src_ip: Ipv4Addr,
+    pub dst_ip: Ipv4Addr,
 }
 
 impl IpHeader {
@@ -79,18 +80,7 @@ impl IpHeader {
     }
 
     fn set_checksum(&self, bytes: &mut [u8]) {
-        let length = bytes.len();
-        let mut checksum = 0u32;
-        // パケットの各 2 バイトを 16 ビットの整数として足し合わせる
-        for i in (0..length).step_by(2) {
-            checksum += u16::from_be_bytes([bytes[i], bytes[i + 1]]) as u32;
-        }
-        // 合計が 16 ビットを超えている場合、上位 16 ビットと下位 16 ビットを足し合わせる
-        // 0xFFFF は 16 ビットの最大値、checksum >> 16 は上位 16 ビット、checksum & 0xFFFF は下位 16 ビットを取得する
-        while checksum > 0xFFFF {
-            checksum = (checksum & 0xFFFF) + (checksum >> 16);
-        }
-        // 1 の補数を取る
-        bytes[10..12].copy_from_slice(&(0xFFFF - checksum as u16).to_be_bytes());
+        let checksum = checksum::checksum(bytes);
+        bytes[10..12].copy_from_slice(&checksum.to_be_bytes());
     }
 }
