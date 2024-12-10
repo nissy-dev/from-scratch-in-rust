@@ -1,0 +1,19 @@
+{
+  "name": "udp-ip",
+  "dockerComposeFile": [
+    "./docker-compose.yml"
+  ],
+  "service": "ubuntu",
+  "remoteUser": "root",
+  "workspaceFolder": "/var/lib/udp-ip",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer"
+      ],
+      "settings": {
+        "editor.formatOnSave": true
+      }
+    }
+  }
+}

@@ -56,7 +56,7 @@ impl IpHeader {
             tos: 0,                            // 優先度が一番低い 0 を指定
             total_length: (IP_HEADER_LENGTH + len) as u16,
             identification: 0,  // フラグメント化しないので 0
-            flags: 0x40,        // フラグメント化を許可しない (0100)
+            flags: 2,           // フラグメント化を許可しない (010)
             fragment_offset: 0, // フラグメント化しないので 0
             ttl: 64,            // 64, 128, 255 などを指定、今回は 64
             protocol: 6,        // TCP のプロトコル番号
@@ -91,7 +91,7 @@ impl IpHeader {
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         let version_and_ihl = (self.version << 4) | self.ihl;
-        let flags_and_fragment_offset = (self.flags << 5) as u16 | (self.fragment_offset & 0x1FFF);
+        let flags_and_fragment_offset = ((self.flags as u16) << 13) | (self.fragment_offset & 0x1FFF);
         bytes.push(version_and_ihl);
         bytes.push(self.tos);
         bytes.extend(&self.total_length.to_be_bytes());

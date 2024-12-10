@@ -1,6 +1,6 @@
 use crate::{
     address::{MacAddr, BROADCAST_MAC_ADDR},
-    ethernet::{EthernetFrame, EthernetType},
+    ethernet::{EthernetFrame, EthernetType, ETHERNET_FRAME_LENGTH},
     net::NetworkInterface,
     socket,
 };
@@ -10,7 +10,7 @@ use tracing::info;
 pub struct Arp {}
 
 impl Arp {
-    pub fn send(dst_ip_addr: Ipv4Addr, src_net_interface: NetworkInterface) -> Option<ArpFrame> {
+    pub fn send(dst_ip_addr: Ipv4Addr, src_net_interface: &NetworkInterface) -> Option<ArpFrame> {
         // 送信するパケットの準備
         let ethernet_frame = EthernetFrame::new(
             EthernetType::Arp,
@@ -35,7 +35,8 @@ impl Arp {
         while let Ok((_ret, _addr)) = reciever.recvfrom() {
             if !reciever.buf.is_empty() && Arp::is_arp_reply_packet(&reciever.buf) {
                 info!("found an arp reply packet...");
-                return Some(ArpFrame::from_bytes(&reciever.buf[14..]));
+                let offset = ETHERNET_FRAME_LENGTH;
+                return Some(ArpFrame::from_bytes(&reciever.buf[offset..]));
             }
         }
         None
@@ -55,17 +56,17 @@ pub struct ArpFrame {
     pub protocol_type: u16,
     pub protocol_size: u8,
     pub opcode: u16,
-    pub src_mac_addr: MacAddr,
-    pub src_ip_addr: Ipv4Addr,
-    pub dst_mac_addr: MacAddr,
-    pub dst_ip_addr: Ipv4Addr,
+    pub sender_mac_addr: MacAddr,
+    pub sender_ip_addr: Ipv4Addr,
+    pub target_mac_addr: MacAddr,
+    pub target_ip_addr: Ipv4Addr,
 }
 
 impl ArpFrame {
     pub fn new_request(
-        dst_ip_addr: Ipv4Addr,
-        src_mac_addr: MacAddr,
-        src_ip_addr: Ipv4Addr,
+        target_ip_addr: Ipv4Addr,
+        sender_mac_addr: MacAddr,
+        sender_ip_addr: Ipv4Addr,
     ) -> Self {
         ArpFrame {
             hardware_type: 0x0001, // Ethernet
@@ -73,10 +74,10 @@ impl ArpFrame {
             hardware_size: 0x06,   // mac address は 6 bytes
             protocol_size: 0x04,   // IP address は 4 bytes
             opcode: 0x0001,        // ARP request
-            src_mac_addr,
-            src_ip_addr,
-            dst_mac_addr: BROADCAST_MAC_ADDR,
-            dst_ip_addr,
+            sender_mac_addr,
+            sender_ip_addr,
+            target_mac_addr: BROADCAST_MAC_ADDR,
+            target_ip_addr,
         }
     }
 
@@ -89,10 +90,10 @@ impl ArpFrame {
         bytes.push(self.hardware_size);
         bytes.push(self.protocol_size);
         bytes.extend(self.opcode.to_be_bytes());
-        bytes.extend(self.src_mac_addr.octets());
-        bytes.extend(self.src_ip_addr.octets());
-        bytes.extend(self.dst_mac_addr.octets());
-        bytes.extend(self.dst_ip_addr.octets());
+        bytes.extend(self.sender_mac_addr.octets());
+        bytes.extend(self.sender_ip_addr.octets());
+        bytes.extend(self.target_mac_addr.octets());
+        bytes.extend(self.target_ip_addr.octets());
         bytes
     }
 
@@ -103,14 +104,14 @@ impl ArpFrame {
             hardware_size: bytes[4],
             protocol_size: bytes[5],
             opcode: u16::from_be_bytes([bytes[6], bytes[7]]),
-            src_mac_addr: MacAddr::new(
+            sender_mac_addr: MacAddr::new(
                 bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13],
             ),
-            src_ip_addr: Ipv4Addr::new(bytes[14], bytes[15], bytes[16], bytes[17]),
-            dst_mac_addr: MacAddr::new(
+            sender_ip_addr: Ipv4Addr::new(bytes[14], bytes[15], bytes[16], bytes[17]),
+            target_mac_addr: MacAddr::new(
                 bytes[18], bytes[19], bytes[20], bytes[21], bytes[22], bytes[23],
             ),
-            dst_ip_addr: Ipv4Addr::new(bytes[24], bytes[25], bytes[26], bytes[27]),
+            target_ip_addr: Ipv4Addr::new(bytes[24], bytes[25], bytes[26], bytes[27]),
         }
     }
 }
