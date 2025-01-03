@@ -1,6 +1,6 @@
 #![allow(non_camel_case_types)]
-#[derive(Debug)]
-enum TokenType {
+#[derive(Debug, Clone, PartialEq)]
+pub enum TokenType {
     // Single-character tokens.
     LEFT_PAREN,
     RIGHT_PAREN,
@@ -13,7 +13,6 @@ enum TokenType {
     SEMICOLON,
     SLASH,
     STAR,
-
     // One or two character tokens.
     BANG,
     BANG_EQUAL,
@@ -23,12 +22,10 @@ enum TokenType {
     GREATER_EQUAL,
     LESS,
     LESS_EQUAL,
-
     // Literals.
     IDENTIFIER,
     STRING(String),
     NUMBER(f64),
-
     // Keywords.
     AND,
     CLASS,
@@ -46,21 +43,14 @@ enum TokenType {
     TRUE,
     VAR,
     WHILE,
-
     EOF,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Token {
-    r#type: TokenType,
-    lexeme: String,
-    line: i32,
-}
-
-impl std::fmt::Display for Token {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{:?} {}", self.r#type, self.lexeme)
-    }
+    pub r#type: TokenType,
+    pub lexeme: String,
+    pub line: i32,
 }
 
 pub struct Scanner {
@@ -234,7 +224,7 @@ impl Scanner {
         }
 
         if self.is_at_end() {
-            tracing::info!("Unterminated string, line {}", self.line);
+            self.error_report("Unterminated string.");
             return;
         }
 
@@ -291,5 +281,9 @@ impl Scanner {
             _ => TokenType::IDENTIFIER,
         };
         self.add_token(token_type);
+    }
+
+    fn error_report(&self, message: &str) {
+        tracing::warn!("[line {}] Error: {}", self.line, message);
     }
 }
