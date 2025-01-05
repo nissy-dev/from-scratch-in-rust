@@ -30,19 +30,17 @@ fn main() {
 fn run(source: String) {
     let mut scanner = lexer::Scanner::new(source);
     scanner.scan();
-    for token in &scanner.tokens {
-        tracing::info!("{:?}", token);
-    }
     let mut parser = parser::Parser::new(scanner.tokens);
-    let expression = parser.parse();
-    match expression {
-        Ok(expr) => {
-            let interpreter = interpreter::Interpreter::new();
-            let result = interpreter.interpret(expr);
-            tracing::info!("{:?}", result);
+    let stmts = parser.parse();
+    let mut interpreter = interpreter::Interpreter::new();
+    match stmts {
+        Ok(stmts) => {
+            let result = interpreter.interpret(stmts);
+            match result {
+                Ok(_) => {}
+                Err(e) => tracing::error!("{:?}", e),
+            }
         }
-        Err(e) => {
-            tracing::error!("{:?}", e);
-        }
+        Err(e) => tracing::error!("{:?}", e),
     }
 }

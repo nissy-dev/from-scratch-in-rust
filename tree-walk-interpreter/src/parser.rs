@@ -1,5 +1,8 @@
 use crate::{
-    ast::{BinaryExpr, Expr, GroupingExpr, LiteralExpr, UnaryExpr},
+    ast::{
+        AssignExpr, BinaryExpr, BlockStmt, Expr, ExprStmt, GroupingExpr, LiteralExpr, PrintStmt,
+        Stmt, UnaryExpr, VarDeclStmt, VariableExpr,
+    },
     lexer::{Token, TokenType},
 };
 
@@ -18,12 +21,99 @@ impl Parser {
         Parser { tokens, current: 0 }
     }
 
-    pub fn parse(&mut self) -> Result<Expr, ParseError> {
-        self.expression()
+    pub fn parse(&mut self) -> Result<Vec<Stmt>, ParseError> {
+        let mut statements = Vec::new();
+        while !self.is_at_end() {
+            let decl = self.declaration();
+            match decl {
+                Ok(decl) => statements.push(decl),
+                Err(e) => {
+                    tracing::error!("{:?}", e);
+                    self.synchronize();
+                }
+            }
+        }
+        Ok(statements)
+    }
+
+    fn declaration(&mut self) -> Result<Stmt, ParseError> {
+        if matches!(self.peek().r#type, TokenType::VAR) {
+            self.advance();
+            return self.var_declaration();
+        }
+
+        self.statement()
+    }
+
+    fn var_declaration(&mut self) -> Result<Stmt, ParseError> {
+        let name = self.consume(TokenType::IDENTIFIER)?;
+        let initializer = if matches!(self.peek().r#type, TokenType::EQUAL) {
+            self.advance();
+            Some(self.expression()?)
+        } else {
+            None
+        };
+        self.consume(TokenType::SEMICOLON)?;
+        Ok(Stmt::VarDecl(Box::new(VarDeclStmt::new(name, initializer))))
+    }
+
+    fn statement(&mut self) -> Result<Stmt, ParseError> {
+        if matches!(self.peek().r#type, TokenType::PRINT) {
+            self.advance();
+            return self.print_statement();
+        }
+
+        if matches!(self.peek().r#type, TokenType::LEFT_BRACE) {
+            self.advance();
+            return self.block_statement();
+        }
+
+        self.expression_statement()
+    }
+
+    fn print_statement(&mut self) -> Result<Stmt, ParseError> {
+        let value = self.expression()?;
+        self.consume(TokenType::SEMICOLON)?;
+        Ok(Stmt::Print(Box::new(PrintStmt::new(value))))
+    }
+
+    fn block_statement(&mut self) -> Result<Stmt, ParseError> {
+        let mut statements = Vec::new();
+        while !matches!(self.peek().r#type, TokenType::RIGHT_BRACE) && !self.is_at_end() {
+            statements.push(self.declaration()?)
+        }
+        self.consume(TokenType::RIGHT_BRACE)?;
+        Ok(Stmt::Block(Box::new(BlockStmt::new(statements))))
+    }
+
+    fn expression_statement(&mut self) -> Result<Stmt, ParseError> {
+        let value = self.expression()?;
+        self.consume(TokenType::SEMICOLON)?;
+        Ok(Stmt::Expr(Box::new(ExprStmt::new(value))))
     }
 
     fn expression(&mut self) -> Result<Expr, ParseError> {
-        self.equality()
+        self.assignment()
+    }
+
+    fn assignment(&mut self) -> Result<Expr, ParseError> {
+        let expr = self.equality()?;
+
+        if matches!(self.peek().r#type, TokenType::EQUAL) {
+            let equal = self.advance();
+            let value = self.assignment()?;
+
+            if let Expr::Variable(variable) = expr {
+                return Ok(Expr::Assign(Box::new(AssignExpr::new(
+                    variable.name,
+                    value,
+                ))));
+            }
+
+            return Err(self.error(&equal, "Invalid assignment target."));
+        }
+
+        Ok(expr)
     }
 
     fn equality(&mut self) -> Result<Expr, ParseError> {
@@ -103,7 +193,13 @@ impl Parser {
             return Ok(Expr::Literal(Box::new(LiteralExpr::new(token))));
         }
 
+        if matches!(self.peek().r#type, TokenType::IDENTIFIER) {
+            let token = self.advance();
+            return Ok(Expr::Variable(Box::new(VariableExpr::new(token))));
+        }
+
         if matches!(self.peek().r#type, TokenType::LEFT_PAREN) {
+            self.advance();
             let expr = self.expression()?;
             self.consume(TokenType::RIGHT_PAREN)?;
             return Ok(Expr::Grouping(Box::new(GroupingExpr::new(expr))));
@@ -132,11 +228,10 @@ impl Parser {
         self.tokens[self.current - 1].clone()
     }
 
-    fn consume(&mut self, token_type: TokenType) -> Result<(), ParseError> {
+    fn consume(&mut self, token_type: TokenType) -> Result<Token, ParseError> {
         let current_token_type = self.peek().r#type;
         if current_token_type == token_type {
-            self.advance();
-            Ok(())
+            Ok(self.advance())
         } else {
             Err(self.error(&self.peek(), "expect token, but not found."))
         }
