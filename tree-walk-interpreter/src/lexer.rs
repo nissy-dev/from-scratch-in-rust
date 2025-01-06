@@ -53,6 +53,16 @@ pub struct Token {
     pub line: i32,
 }
 
+impl Token {
+    pub fn new(r#type: TokenType, lexeme: String, line: i32) -> Self {
+        Token {
+            r#type,
+            lexeme,
+            line,
+        }
+    }
+}
+
 pub struct Scanner {
     source: String,
     pub tokens: Vec<Token>,

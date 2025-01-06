@@ -1,7 +1,7 @@
 use crate::{
     ast::{
-        AssignExpr, BinaryExpr, BlockStmt, Expr, ExprStmt, GroupingExpr, LiteralExpr, PrintStmt,
-        Stmt, UnaryExpr, VarDeclStmt, VariableExpr,
+        AssignExpr, BinaryExpr, BlockStmt, Expr, ExprStmt, GroupingExpr, IfStmt, LiteralExpr,
+        LogicalExpr, PrintStmt, Stmt, UnaryExpr, VarDeclStmt, VariableExpr, WhileStmt,
     },
     lexer::{Token, TokenType},
 };
@@ -58,9 +58,24 @@ impl Parser {
     }
 
     fn statement(&mut self) -> Result<Stmt, ParseError> {
+        if matches!(self.peek().r#type, TokenType::FOR) {
+            self.advance();
+            return self.for_statement();
+        }
+
+        if matches!(self.peek().r#type, TokenType::IF) {
+            self.advance();
+            return self.if_statement();
+        }
+
         if matches!(self.peek().r#type, TokenType::PRINT) {
             self.advance();
             return self.print_statement();
+        }
+
+        if matches!(self.peek().r#type, TokenType::WHILE) {
+            self.advance();
+            return self.while_statement();
         }
 
         if matches!(self.peek().r#type, TokenType::LEFT_BRACE) {
@@ -71,10 +86,84 @@ impl Parser {
         self.expression_statement()
     }
 
+    // for loop は while loop の syntax sugar として処理する
+    fn for_statement(&mut self) -> Result<Stmt, ParseError> {
+        self.consume(TokenType::LEFT_PAREN)?;
+
+        let initializer = if matches!(self.peek().r#type, TokenType::SEMICOLON) {
+            None
+        } else if matches!(self.peek().r#type, TokenType::VAR) {
+            self.advance();
+            Some(self.var_declaration()?)
+        } else {
+            Some(self.expression_statement()?)
+        };
+
+        let condition = if !matches!(self.peek().r#type, TokenType::SEMICOLON) {
+            self.expression()?
+        } else {
+            Expr::Literal(Box::new(LiteralExpr::new(Token::new(
+                TokenType::TRUE,
+                "true".to_string(),
+                0,
+            ))))
+        };
+        self.consume(TokenType::SEMICOLON)?;
+
+        let increment = if !matches!(self.peek().r#type, TokenType::RIGHT_PAREN) {
+            Some(self.expression()?)
+        } else {
+            None
+        };
+        self.consume(TokenType::RIGHT_PAREN)?;
+
+        let mut body = self.statement()?;
+        if let Some(increment) = increment {
+            body = Stmt::Block(Box::new(BlockStmt::new(vec![
+                body.clone(),
+                Stmt::Expr(Box::new(ExprStmt::new(increment))),
+            ])));
+        }
+        body = Stmt::While(Box::new(WhileStmt::new(condition, Box::new(body.clone()))));
+        if let Some(initializer) = initializer {
+            body = Stmt::Block(Box::new(BlockStmt::new(vec![initializer, body.clone()])));
+        }
+        Ok(body)
+    }
+
+    fn if_statement(&mut self) -> Result<Stmt, ParseError> {
+        self.consume(TokenType::LEFT_PAREN)?;
+        let condition = self.expression()?;
+        self.consume(TokenType::RIGHT_PAREN)?;
+
+        let then_branch = Box::new(self.statement()?);
+        let else_branch = if matches!(self.peek().r#type, TokenType::ELSE) {
+            self.advance();
+            Some(Box::new(self.statement()?))
+        } else {
+            None
+        };
+
+        Ok(Stmt::If(Box::new(IfStmt::new(
+            condition,
+            then_branch,
+            else_branch,
+        ))))
+    }
+
     fn print_statement(&mut self) -> Result<Stmt, ParseError> {
         let value = self.expression()?;
         self.consume(TokenType::SEMICOLON)?;
         Ok(Stmt::Print(Box::new(PrintStmt::new(value))))
+    }
+
+    fn while_statement(&mut self) -> Result<Stmt, ParseError> {
+        self.consume(TokenType::LEFT_PAREN)?;
+        let condition = self.expression()?;
+        self.consume(TokenType::RIGHT_PAREN)?;
+
+        let body = Box::new(self.statement()?);
+        Ok(Stmt::While(Box::new(WhileStmt::new(condition, body))))
     }
 
     fn block_statement(&mut self) -> Result<Stmt, ParseError> {
@@ -97,7 +186,7 @@ impl Parser {
     }
 
     fn assignment(&mut self) -> Result<Expr, ParseError> {
-        let expr = self.equality()?;
+        let expr = self.logical_or()?;
 
         if matches!(self.peek().r#type, TokenType::EQUAL) {
             let equal = self.advance();
@@ -111,6 +200,30 @@ impl Parser {
             }
 
             return Err(self.error(&equal, "Invalid assignment target."));
+        }
+
+        Ok(expr)
+    }
+
+    fn logical_or(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.logical_and()?;
+
+        while matches!(self.peek().r#type, TokenType::OR) {
+            let operator = self.advance();
+            let right = self.logical_and()?;
+            expr = Expr::Logical(Box::new(LogicalExpr::new(expr, operator, right)));
+        }
+
+        Ok(expr)
+    }
+
+    fn logical_and(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.equality()?;
+
+        while matches!(self.peek().r#type, TokenType::AND) {
+            let operator = self.advance();
+            let right = self.equality()?;
+            expr = Expr::Logical(Box::new(LogicalExpr::new(expr, operator, right)));
         }
 
         Ok(expr)
@@ -140,7 +253,7 @@ impl Parser {
         ) {
             let operator = self.advance();
             let right = self.term()?;
-            expr = Expr::Binary(Box::new(BinaryExpr::new(expr, operator.clone(), right)));
+            expr = Expr::Binary(Box::new(BinaryExpr::new(expr, operator, right)));
         }
 
         Ok(expr)
@@ -152,7 +265,7 @@ impl Parser {
         while matches!(self.peek().r#type, TokenType::MINUS | TokenType::PLUS) {
             let operator = self.advance();
             let right = self.factor()?;
-            expr = Expr::Binary(Box::new(BinaryExpr::new(expr, operator.clone(), right)));
+            expr = Expr::Binary(Box::new(BinaryExpr::new(expr, operator, right)));
         }
 
         Ok(expr)
@@ -164,7 +277,7 @@ impl Parser {
         while matches!(self.peek().r#type, TokenType::SLASH | TokenType::STAR) {
             let operator = self.advance();
             let right = self.unary()?;
-            expr = Expr::Binary(Box::new(BinaryExpr::new(expr, operator.clone(), right)));
+            expr = Expr::Binary(Box::new(BinaryExpr::new(expr, operator, right)));
         }
 
         Ok(expr)

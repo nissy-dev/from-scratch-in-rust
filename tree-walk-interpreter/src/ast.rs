@@ -1,14 +1,16 @@
 use crate::lexer::Token;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Stmt {
     Expr(Box<ExprStmt>),
     Print(Box<PrintStmt>),
     VarDecl(Box<VarDeclStmt>),
     Block(Box<BlockStmt>),
+    If(Box<IfStmt>),
+    While(Box<WhileStmt>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExprStmt {
     pub expr: Expr,
 }
@@ -19,7 +21,7 @@ impl ExprStmt {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PrintStmt {
     pub expr: Expr,
 }
@@ -30,7 +32,7 @@ impl PrintStmt {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VarDeclStmt {
     pub name: Token,
     pub initializer: Option<Expr>,
@@ -42,7 +44,7 @@ impl VarDeclStmt {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BlockStmt {
     pub statements: Vec<Stmt>,
 }
@@ -53,7 +55,36 @@ impl BlockStmt {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub struct IfStmt {
+    pub condition: Expr,
+    pub then_branch: Box<Stmt>,
+    pub else_branch: Option<Box<Stmt>>,
+}
+
+impl IfStmt {
+    pub fn new(condition: Expr, then_branch: Box<Stmt>, else_branch: Option<Box<Stmt>>) -> Self {
+        IfStmt {
+            condition,
+            then_branch,
+            else_branch,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct WhileStmt {
+    pub condition: Expr,
+    pub body: Box<Stmt>,
+}
+
+impl WhileStmt {
+    pub fn new(condition: Expr, body: Box<Stmt>) -> Self {
+        WhileStmt { condition, body }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Expr {
     Literal(Box<LiteralExpr>),
     Unary(Box<UnaryExpr>),
@@ -61,9 +92,10 @@ pub enum Expr {
     Grouping(Box<GroupingExpr>),
     Variable(Box<VariableExpr>),
     Assign(Box<AssignExpr>),
+    Logical(Box<LogicalExpr>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LiteralExpr {
     pub value: Token,
 }
@@ -74,7 +106,7 @@ impl LiteralExpr {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BinaryExpr {
     pub left: Expr,
     pub operator: Token,
@@ -91,7 +123,7 @@ impl BinaryExpr {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UnaryExpr {
     pub operator: Token,
     pub right: Expr,
@@ -103,7 +135,7 @@ impl UnaryExpr {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GroupingExpr {
     pub expression: Expr,
 }
@@ -114,7 +146,7 @@ impl GroupingExpr {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VariableExpr {
     pub name: Token,
 }
@@ -125,7 +157,7 @@ impl VariableExpr {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AssignExpr {
     pub name: Token,
     pub value: Expr,
@@ -134,5 +166,22 @@ pub struct AssignExpr {
 impl AssignExpr {
     pub fn new(name: Token, value: Expr) -> Self {
         AssignExpr { name, value }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LogicalExpr {
+    pub left: Expr,
+    pub operator: Token,
+    pub right: Expr,
+}
+
+impl LogicalExpr {
+    pub fn new(left: Expr, operator: Token, right: Expr) -> Self {
+        LogicalExpr {
+            left,
+            operator,
+            right,
+        }
     }
 }

@@ -3,8 +3,8 @@ use std::collections::HashMap;
 
 use crate::{
     ast::{
-        AssignExpr, BinaryExpr, BlockStmt, Expr, ExprStmt, GroupingExpr, LiteralExpr, PrintStmt,
-        Stmt, UnaryExpr, VarDeclStmt, VariableExpr,
+        AssignExpr, BinaryExpr, BlockStmt, Expr, ExprStmt, GroupingExpr, IfStmt, LiteralExpr,
+        LogicalExpr, PrintStmt, Stmt, UnaryExpr, VarDeclStmt, VariableExpr, WhileStmt,
     },
     lexer::TokenType,
 };
@@ -22,6 +22,16 @@ pub enum Value {
     Number(f64),
     Null,
     Boolean(bool),
+}
+
+impl Value {
+    pub fn is_truthy(&self) -> bool {
+        match self {
+            Value::Null => false,
+            Value::Boolean(val) => *val,
+            _ => true,
+        }
+    }
 }
 
 impl fmt::Display for Value {
@@ -49,10 +59,10 @@ impl Environment {
         }
     }
 
-    pub fn new_with_enclosing(enclosing: Environment) -> Self {
+    pub fn new_with_enclosing(enclosing: Box<Environment>) -> Self {
         Environment {
             variables: HashMap::new(),
-            enclosing: Some(Box::new(enclosing)),
+            enclosing: Some(enclosing),
         }
     }
 
@@ -76,20 +86,21 @@ impl Environment {
             return Ok(());
         }
         if let Some(enclosing) = &mut self.enclosing {
-            return enclosing.assign(name, value);
+            enclosing.assign(name, value)?;
+            return Ok(());
         }
         Err(RuntimeError::UndefinedVariable)
     }
 }
 
 pub struct Interpreter {
-    environment: Environment,
+    environment: Box<Environment>,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
         Interpreter {
-            environment: Environment::new(),
+            environment: Box::new(Environment::new()),
         }
     }
 
@@ -106,6 +117,8 @@ impl Interpreter {
             Stmt::Print(print) => self.visit_print_stmt(*print),
             Stmt::VarDecl(var_decl) => self.visit_var_decl_stmt(*var_decl),
             Stmt::Block(block) => self.visit_block_stmt(*block),
+            Stmt::If(if_stmt) => self.visit_if_stmt(*if_stmt),
+            Stmt::While(while_stmt) => self.visit_while_stmt(*while_stmt),
         }
     }
 
@@ -135,23 +148,39 @@ impl Interpreter {
         self.evaluate_block(block.statements, environment)
     }
 
+    fn visit_if_stmt(&mut self, if_stmt: IfStmt) -> Result<(), RuntimeError> {
+        let condition = self.evaluate_expr(if_stmt.condition)?;
+        if condition.is_truthy() {
+            self.evaluate_stmt(*if_stmt.then_branch)?;
+        } else if let Some(else_branch) = if_stmt.else_branch {
+            self.evaluate_stmt(*else_branch)?;
+        }
+        Ok(())
+    }
+
+    fn visit_while_stmt(&mut self, while_stmt: WhileStmt) -> Result<(), RuntimeError> {
+        while self
+            .evaluate_expr(while_stmt.clone().condition)?
+            .is_truthy()
+        {
+            self.evaluate_stmt(*while_stmt.clone().body)?;
+        }
+        Ok(())
+    }
+
     fn evaluate_block(
         &mut self,
         statements: Vec<Stmt>,
         environment: Environment,
     ) -> Result<(), RuntimeError> {
-        let previous = self.environment.clone();
-        self.environment = environment;
+        self.environment = Box::new(environment);
         for stmt in statements {
             match self.evaluate_stmt(stmt) {
                 Ok(_) => {}
-                Err(e) => {
-                    self.environment = previous;
-                    return Err(e);
-                }
+                Err(_) => break,
             }
         }
-        self.environment = previous;
+        self.environment = self.environment.enclosing.as_mut().unwrap().clone();
         Ok(())
     }
 
@@ -163,6 +192,7 @@ impl Interpreter {
             Expr::Binary(binary) => self.visit_binary_expr(*binary),
             Expr::Variable(variable) => self.visit_variable_expr(*variable),
             Expr::Assign(assign) => self.visit_assign_expr(*assign),
+            Expr::Logical(logical) => self.visit_logical_expr(*logical),
         }
     }
 
@@ -188,7 +218,7 @@ impl Interpreter {
                 Value::Number(val) => Ok(Value::Number(-val)),
                 _ => Err(RuntimeError::UnexpectedOperator),
             },
-            TokenType::BANG => Ok(Value::Boolean(!self.is_truthy(right))),
+            TokenType::BANG => Ok(Value::Boolean(!right.is_truthy())),
             _ => Err(RuntimeError::UnexpectedOperator),
         }
     }
@@ -237,11 +267,17 @@ impl Interpreter {
         Ok(value)
     }
 
-    fn is_truthy(&self, value: Value) -> bool {
-        match value {
-            Value::Null => false,
-            Value::Boolean(val) => val,
-            _ => true,
+    fn visit_logical_expr(&mut self, logical: LogicalExpr) -> Result<Value, RuntimeError> {
+        let left = self.evaluate_expr(logical.left)?;
+        if logical.operator.r#type == TokenType::OR {
+            if left.is_truthy() {
+                return Ok(left.clone());
+            }
+        } else {
+            if !left.is_truthy() {
+                return Ok(left.clone());
+            }
         }
+        self.evaluate_expr(logical.right)
     }
 }
