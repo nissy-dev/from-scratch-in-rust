@@ -5,9 +5,11 @@ pub enum Stmt {
     Expr(Box<ExprStmt>),
     Print(Box<PrintStmt>),
     VarDecl(Box<VarDeclStmt>),
+    FunctionDecl(Box<FunctionDeclStmt>),
     Block(Box<BlockStmt>),
     If(Box<IfStmt>),
     While(Box<WhileStmt>),
+    Return(Box<ReturnStmt>),
 }
 
 #[derive(Debug, Clone)]
@@ -41,6 +43,19 @@ pub struct VarDeclStmt {
 impl VarDeclStmt {
     pub fn new(name: Token, initializer: Option<Expr>) -> Self {
         VarDeclStmt { name, initializer }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FunctionDeclStmt {
+    pub name: Token,
+    pub params: Vec<Token>,
+    pub body: Vec<Stmt>,
+}
+
+impl FunctionDeclStmt {
+    pub fn new(name: Token, params: Vec<Token>, body: Vec<Stmt>) -> Self {
+        FunctionDeclStmt { name, params, body }
     }
 }
 
@@ -85,6 +100,18 @@ impl WhileStmt {
 }
 
 #[derive(Debug, Clone)]
+pub struct ReturnStmt {
+    pub keyword: Token,
+    pub value: Option<Expr>,
+}
+
+impl ReturnStmt {
+    pub fn new(keyword: Token, value: Option<Expr>) -> Self {
+        ReturnStmt { keyword, value }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Expr {
     Literal(Box<LiteralExpr>),
     Unary(Box<UnaryExpr>),
@@ -93,6 +120,7 @@ pub enum Expr {
     Variable(Box<VariableExpr>),
     Assign(Box<AssignExpr>),
     Logical(Box<LogicalExpr>),
+    Call(Box<CallExpr>),
 }
 
 #[derive(Debug, Clone)]
@@ -182,6 +210,23 @@ impl LogicalExpr {
             left,
             operator,
             right,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CallExpr {
+    pub callee: Expr,
+    pub paren: Token,
+    pub arguments: Vec<Expr>,
+}
+
+impl CallExpr {
+    pub fn new(callee: Expr, paren: Token, arguments: Vec<Expr>) -> Self {
+        CallExpr {
+            callee,
+            paren,
+            arguments,
         }
     }
 }

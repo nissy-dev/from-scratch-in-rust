@@ -3,8 +3,9 @@ use std::collections::HashMap;
 
 use crate::{
     ast::{
-        AssignExpr, BinaryExpr, BlockStmt, Expr, ExprStmt, GroupingExpr, IfStmt, LiteralExpr,
-        LogicalExpr, PrintStmt, Stmt, UnaryExpr, VarDeclStmt, VariableExpr, WhileStmt,
+        AssignExpr, BinaryExpr, BlockStmt, CallExpr, Expr, ExprStmt, FunctionDeclStmt,
+        GroupingExpr, IfStmt, LiteralExpr, LogicalExpr, PrintStmt, ReturnStmt, Stmt, UnaryExpr,
+        VarDeclStmt, VariableExpr, WhileStmt,
     },
     lexer::TokenType,
 };
@@ -14,6 +15,7 @@ pub enum RuntimeError {
     UnexpectedValue,
     UnexpectedOperator,
     UndefinedVariable,
+    Return(Option<Value>),
 }
 
 #[derive(Debug, Clone)]
@@ -22,6 +24,74 @@ pub enum Value {
     Number(f64),
     Null,
     Boolean(bool),
+    Function(Box<dyn Callable>),
+}
+
+pub trait Callable: CallableClone + fmt::Debug {
+    fn call(&self, interpreter: &mut Interpreter, arguments: Vec<Value>) -> Value;
+}
+
+pub trait CallableClone {
+    fn clone_box(&self) -> Box<dyn Callable>;
+}
+
+impl<T> CallableClone for T
+where
+    T: 'static + Callable + Clone,
+{
+    fn clone_box(&self) -> Box<dyn Callable> {
+        Box::new(self.clone())
+    }
+}
+
+impl Clone for Box<dyn Callable> {
+    fn clone(&self) -> Box<dyn Callable> {
+        self.clone_box()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ClockFunction;
+
+impl Callable for ClockFunction {
+    fn call(&self, _interpreter: &mut Interpreter, _arguments: Vec<Value>) -> Value {
+        Value::Number(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs_f64()
+                / 1000.0,
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+struct LoxFunction {
+    declaration: FunctionDeclStmt,
+    closure: Box<Environment>,
+}
+
+impl LoxFunction {
+    pub fn new(declaration: FunctionDeclStmt, closure: Box<Environment>) -> Self {
+        LoxFunction {
+            declaration,
+            closure,
+        }
+    }
+}
+
+impl Callable for LoxFunction {
+    fn call(&self, interpreter: &mut Interpreter, arguments: Vec<Value>) -> Value {
+        let mut environment = Environment::new_with_enclosing(self.closure.clone());
+        println!("LoxFunction env: {:?}", environment);
+        for (param, arg) in self.declaration.params.iter().zip(arguments.iter()) {
+            environment.define(param.lexeme.clone(), arg.clone());
+        }
+        match interpreter.evaluate_block(self.declaration.body.clone(), environment) {
+            Err(RuntimeError::Return(Some(value))) => value,
+            _ => Value::Null,
+        }
+    }
 }
 
 impl Value {
@@ -41,6 +111,7 @@ impl fmt::Display for Value {
             Value::Number(val) => write!(f, "{}", val),
             Value::Null => write!(f, "nil"),
             Value::Boolean(val) => write!(f, "{}", val),
+            Value::Function(_) => write!(f, "<fn>"),
         }
     }
 }
@@ -99,9 +170,12 @@ pub struct Interpreter {
 
 impl Interpreter {
     pub fn new() -> Self {
-        Interpreter {
-            environment: Box::new(Environment::new()),
-        }
+        let mut environment = Box::new(Environment::new());
+        environment.define(
+            "clock".to_string(),
+            Value::Function(Box::new(ClockFunction {})),
+        );
+        Interpreter { environment }
     }
 
     pub fn interpret(&mut self, stmts: Vec<Stmt>) -> Result<(), RuntimeError> {
@@ -116,9 +190,11 @@ impl Interpreter {
             Stmt::Expr(expr) => self.visit_expr_stmt(*expr),
             Stmt::Print(print) => self.visit_print_stmt(*print),
             Stmt::VarDecl(var_decl) => self.visit_var_decl_stmt(*var_decl),
+            Stmt::FunctionDecl(function_decl) => self.visit_function_decl_stmt(*function_decl),
             Stmt::Block(block) => self.visit_block_stmt(*block),
             Stmt::If(if_stmt) => self.visit_if_stmt(*if_stmt),
             Stmt::While(while_stmt) => self.visit_while_stmt(*while_stmt),
+            Stmt::Return(return_stmt) => self.visit_return_stmt(*return_stmt),
         }
     }
 
@@ -140,6 +216,18 @@ impl Interpreter {
             Value::Null
         };
         self.environment.define(var_decl.name.lexeme, value);
+        Ok(())
+    }
+
+    fn visit_function_decl_stmt(
+        &mut self,
+        function_decl: FunctionDeclStmt,
+    ) -> Result<(), RuntimeError> {
+        let function = Value::Function(Box::new(LoxFunction::new(
+            function_decl.clone(),
+            self.environment.clone(),
+        )));
+        self.environment.define(function_decl.name.lexeme, function);
         Ok(())
     }
 
@@ -168,19 +256,31 @@ impl Interpreter {
         Ok(())
     }
 
+    fn visit_return_stmt(&mut self, return_stmt: ReturnStmt) -> Result<(), RuntimeError> {
+        Err(RuntimeError::Return(
+            if let Some(value) = return_stmt.value {
+                Some(self.evaluate_expr(value)?)
+            } else {
+                None
+            },
+        ))
+    }
+
     fn evaluate_block(
         &mut self,
         statements: Vec<Stmt>,
         environment: Environment,
     ) -> Result<(), RuntimeError> {
         self.environment = Box::new(environment);
-        for stmt in statements {
-            match self.evaluate_stmt(stmt) {
-                Ok(_) => {}
-                Err(_) => break,
-            }
-        }
+        let result = self.block_loop(statements);
         self.environment = self.environment.enclosing.as_mut().unwrap().clone();
+        result
+    }
+
+    fn block_loop(&mut self, stmts: Vec<Stmt>) -> Result<(), RuntimeError> {
+        for stmt in stmts {
+            self.evaluate_stmt(stmt)?;
+        }
         Ok(())
     }
 
@@ -193,6 +293,7 @@ impl Interpreter {
             Expr::Variable(variable) => self.visit_variable_expr(*variable),
             Expr::Assign(assign) => self.visit_assign_expr(*assign),
             Expr::Logical(logical) => self.visit_logical_expr(*logical),
+            Expr::Call(call) => self.visit_call_expr(*call),
         }
     }
 
@@ -279,5 +380,22 @@ impl Interpreter {
             }
         }
         self.evaluate_expr(logical.right)
+    }
+
+    fn visit_call_expr(&mut self, call: CallExpr) -> Result<Value, RuntimeError> {
+        println!("Call env: {:?}", self.environment);
+        let callee = self.evaluate_expr(call.callee)?;
+        let mut arguments = Vec::new();
+        for argument in call.arguments {
+            arguments.push(self.evaluate_expr(argument)?);
+        }
+
+        match callee {
+            Value::Function(function) => Ok(function.call(self, arguments)),
+            _ => {
+                tracing::error!("Can only call functions and classes");
+                Err(RuntimeError::UnexpectedValue)
+            }
+        }
     }
 }

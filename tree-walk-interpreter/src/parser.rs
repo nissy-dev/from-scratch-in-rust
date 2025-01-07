@@ -1,7 +1,8 @@
 use crate::{
     ast::{
-        AssignExpr, BinaryExpr, BlockStmt, Expr, ExprStmt, GroupingExpr, IfStmt, LiteralExpr,
-        LogicalExpr, PrintStmt, Stmt, UnaryExpr, VarDeclStmt, VariableExpr, WhileStmt,
+        AssignExpr, BinaryExpr, BlockStmt, CallExpr, Expr, ExprStmt, FunctionDeclStmt,
+        GroupingExpr, IfStmt, LiteralExpr, LogicalExpr, PrintStmt, ReturnStmt, Stmt, UnaryExpr,
+        VarDeclStmt, VariableExpr, WhileStmt,
     },
     lexer::{Token, TokenType},
 };
@@ -37,12 +38,47 @@ impl Parser {
     }
 
     fn declaration(&mut self) -> Result<Stmt, ParseError> {
+        if matches!(self.peek().r#type, TokenType::FUN) {
+            self.advance();
+            return self.function_declaration();
+        }
+
         if matches!(self.peek().r#type, TokenType::VAR) {
             self.advance();
             return self.var_declaration();
         }
 
         self.statement()
+    }
+
+    fn function_declaration(&mut self) -> Result<Stmt, ParseError> {
+        let name = self.consume(TokenType::IDENTIFIER)?;
+        self.consume(TokenType::LEFT_PAREN)?;
+
+        let mut parameters = Vec::new();
+        if !matches!(self.peek().r#type, TokenType::RIGHT_PAREN) {
+            loop {
+                if parameters.len() >= 255 {
+                    return Err(self.error(&self.peek(), "Cannot have more than 255 parameters."));
+                }
+                parameters.push(self.consume(TokenType::IDENTIFIER)?);
+                if !matches!(self.peek().r#type, TokenType::COMMA) {
+                    break;
+                }
+                self.advance();
+            }
+        }
+        self.consume(TokenType::RIGHT_PAREN)?;
+
+        self.consume(TokenType::LEFT_BRACE)?;
+        let mut body = Vec::new();
+        while !matches!(self.peek().r#type, TokenType::RIGHT_BRACE) && !self.is_at_end() {
+            body.push(self.declaration()?)
+        }
+        self.consume(TokenType::RIGHT_BRACE)?;
+        Ok(Stmt::FunctionDecl(Box::new(FunctionDeclStmt::new(
+            name, parameters, body,
+        ))))
     }
 
     fn var_declaration(&mut self) -> Result<Stmt, ParseError> {
@@ -71,6 +107,11 @@ impl Parser {
         if matches!(self.peek().r#type, TokenType::PRINT) {
             self.advance();
             return self.print_statement();
+        }
+
+        if matches!(self.peek().r#type, TokenType::RETURN) {
+            self.advance();
+            return self.return_statement();
         }
 
         if matches!(self.peek().r#type, TokenType::WHILE) {
@@ -155,6 +196,17 @@ impl Parser {
         let value = self.expression()?;
         self.consume(TokenType::SEMICOLON)?;
         Ok(Stmt::Print(Box::new(PrintStmt::new(value))))
+    }
+
+    fn return_statement(&mut self) -> Result<Stmt, ParseError> {
+        let keyword = self.previous();
+        let value = if !matches!(self.peek().r#type, TokenType::SEMICOLON) {
+            Some(self.expression()?)
+        } else {
+            None
+        };
+        self.consume(TokenType::SEMICOLON)?;
+        Ok(Stmt::Return(Box::new(ReturnStmt::new(keyword, value))))
     }
 
     fn while_statement(&mut self) -> Result<Stmt, ParseError> {
@@ -290,7 +342,22 @@ impl Parser {
             return Ok(Expr::Unary(Box::new(UnaryExpr::new(operator, right))));
         }
 
-        self.primary()
+        self.call()
+    }
+
+    fn call(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.primary()?;
+
+        loop {
+            if matches!(self.peek().r#type, TokenType::LEFT_PAREN) {
+                self.advance();
+                expr = self.finish_call(expr)?;
+            } else {
+                break;
+            }
+        }
+
+        Ok(expr)
     }
 
     fn primary(&mut self) -> Result<Expr, ParseError> {
@@ -319,6 +386,27 @@ impl Parser {
         }
 
         Err(self.error(&self.peek(), "expect expression, but not found."))
+    }
+
+    fn finish_call(&mut self, callee: Expr) -> Result<Expr, ParseError> {
+        let mut arguments = Vec::new();
+        if !matches!(self.peek().r#type, TokenType::RIGHT_PAREN) {
+            loop {
+                if arguments.len() >= 255 {
+                    return Err(self.error(&self.peek(), "Cannot have more than 255 arguments."));
+                }
+                arguments.push(self.expression()?);
+                if !matches!(self.peek().r#type, TokenType::COMMA) {
+                    break;
+                }
+                self.advance();
+            }
+        }
+        let paren = self.consume(TokenType::RIGHT_PAREN)?;
+
+        Ok(Expr::Call(Box::new(CallExpr::new(
+            callee, paren, arguments,
+        ))))
     }
 
     fn advance(&mut self) -> Token {
