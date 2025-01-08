@@ -1,5 +1,5 @@
 use core::fmt;
-use std::collections::HashMap;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{
     ast::{
@@ -68,11 +68,11 @@ impl Callable for ClockFunction {
 #[derive(Debug, Clone)]
 struct LoxFunction {
     declaration: FunctionDeclStmt,
-    closure: Box<Environment>,
+    closure: Rc<RefCell<Environment>>,
 }
 
 impl LoxFunction {
-    pub fn new(declaration: FunctionDeclStmt, closure: Box<Environment>) -> Self {
+    pub fn new(declaration: FunctionDeclStmt, closure: Rc<RefCell<Environment>>) -> Self {
         LoxFunction {
             declaration,
             closure,
@@ -83,7 +83,6 @@ impl LoxFunction {
 impl Callable for LoxFunction {
     fn call(&self, interpreter: &mut Interpreter, arguments: Vec<Value>) -> Value {
         let mut environment = Environment::new_with_enclosing(self.closure.clone());
-        println!("LoxFunction env: {:?}", environment);
         for (param, arg) in self.declaration.params.iter().zip(arguments.iter()) {
             environment.define(param.lexeme.clone(), arg.clone());
         }
@@ -118,7 +117,7 @@ impl fmt::Display for Value {
 
 #[derive(Debug, Clone)]
 struct Environment {
-    enclosing: Option<Box<Environment>>,
+    enclosing: Option<Rc<RefCell<Environment>>>,
     variables: HashMap<String, Value>,
 }
 
@@ -130,7 +129,7 @@ impl Environment {
         }
     }
 
-    pub fn new_with_enclosing(enclosing: Box<Environment>) -> Self {
+    pub fn new_with_enclosing(enclosing: Rc<RefCell<Environment>>) -> Self {
         Environment {
             variables: HashMap::new(),
             enclosing: Some(enclosing),
@@ -141,12 +140,12 @@ impl Environment {
         self.variables.insert(name, value);
     }
 
-    pub fn get(&self, name: &str) -> Result<&Value, RuntimeError> {
+    pub fn get(&self, name: &str) -> Result<Value, RuntimeError> {
         if let Some(value) = self.variables.get(name) {
-            return Ok(value);
+            return Ok(value.clone());
         }
         if let Some(enclosing) = &self.enclosing {
-            return enclosing.get(name);
+            return enclosing.borrow().get(name);
         }
         Err(RuntimeError::UndefinedVariable)
     }
@@ -157,7 +156,7 @@ impl Environment {
             return Ok(());
         }
         if let Some(enclosing) = &mut self.enclosing {
-            enclosing.assign(name, value)?;
+            enclosing.borrow_mut().assign(name, value)?;
             return Ok(());
         }
         Err(RuntimeError::UndefinedVariable)
@@ -165,17 +164,19 @@ impl Environment {
 }
 
 pub struct Interpreter {
-    environment: Box<Environment>,
+    environment: Rc<RefCell<Environment>>,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
-        let mut environment = Box::new(Environment::new());
+        let mut environment = Environment::new();
         environment.define(
             "clock".to_string(),
             Value::Function(Box::new(ClockFunction {})),
         );
-        Interpreter { environment }
+        Interpreter {
+            environment: Rc::new(RefCell::new(environment)),
+        }
     }
 
     pub fn interpret(&mut self, stmts: Vec<Stmt>) -> Result<(), RuntimeError> {
@@ -215,7 +216,9 @@ impl Interpreter {
         } else {
             Value::Null
         };
-        self.environment.define(var_decl.name.lexeme, value);
+        self.environment
+            .borrow_mut()
+            .define(var_decl.name.lexeme, value);
         Ok(())
     }
 
@@ -227,7 +230,9 @@ impl Interpreter {
             function_decl.clone(),
             self.environment.clone(),
         )));
-        self.environment.define(function_decl.name.lexeme, function);
+        self.environment
+            .borrow_mut()
+            .define(function_decl.name.lexeme, function);
         Ok(())
     }
 
@@ -271,9 +276,9 @@ impl Interpreter {
         statements: Vec<Stmt>,
         environment: Environment,
     ) -> Result<(), RuntimeError> {
-        self.environment = Box::new(environment);
+        let previous = std::mem::replace(&mut self.environment, Rc::new(RefCell::new(environment)));
         let result = self.block_loop(statements);
-        self.environment = self.environment.enclosing.as_mut().unwrap().clone();
+        self.environment = previous;
         result
     }
 
@@ -355,7 +360,7 @@ impl Interpreter {
     }
 
     fn visit_variable_expr(&self, variable: VariableExpr) -> Result<Value, RuntimeError> {
-        match self.environment.get(&variable.name.lexeme) {
+        match self.environment.borrow().get(&variable.name.lexeme) {
             Ok(value) => Ok(value.clone()),
             Err(e) => Err(e),
         }
@@ -364,6 +369,7 @@ impl Interpreter {
     fn visit_assign_expr(&mut self, assign: AssignExpr) -> Result<Value, RuntimeError> {
         let value = self.evaluate_expr(assign.value)?;
         self.environment
+            .borrow_mut()
             .assign(&assign.name.lexeme, value.clone())?;
         Ok(value)
     }
@@ -383,7 +389,6 @@ impl Interpreter {
     }
 
     fn visit_call_expr(&mut self, call: CallExpr) -> Result<Value, RuntimeError> {
-        println!("Call env: {:?}", self.environment);
         let callee = self.evaluate_expr(call.callee)?;
         let mut arguments = Vec::new();
         for argument in call.arguments {
