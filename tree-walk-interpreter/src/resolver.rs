@@ -19,7 +19,7 @@ impl Resolver {
     pub fn new(interpreter: Rc<RefCell<Interpreter>>) -> Self {
         Resolver {
             interpreter,
-            scopes: Vec::new(),
+            scopes: vec![HashMap::new()],
         }
     }
 
@@ -95,7 +95,9 @@ impl Resolver {
             self.declare(param.clone());
             self.define(param.clone());
         }
-        self.resolve(func_decl.body);
+        for stmt in &func_decl.body {
+            self.resolve_stmt(stmt.clone());
+        }
         self.end_scope();
     }
 

@@ -147,6 +147,7 @@ impl Parser {
                 TokenType::TRUE,
                 "true".to_string(),
                 0,
+                0,
             ))))
         };
         self.consume(TokenType::SEMICOLON)?;
