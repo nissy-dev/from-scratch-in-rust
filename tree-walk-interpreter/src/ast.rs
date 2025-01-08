@@ -1,6 +1,6 @@
 use crate::lexer::Token;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub enum Stmt {
     Expr(Box<ExprStmt>),
     Print(Box<PrintStmt>),
@@ -12,7 +12,7 @@ pub enum Stmt {
     Return(Box<ReturnStmt>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct ExprStmt {
     pub expr: Expr,
 }
@@ -23,7 +23,7 @@ impl ExprStmt {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct PrintStmt {
     pub expr: Expr,
 }
@@ -34,7 +34,7 @@ impl PrintStmt {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct VarDeclStmt {
     pub name: Token,
     pub initializer: Option<Expr>,
@@ -46,7 +46,7 @@ impl VarDeclStmt {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct FunctionDeclStmt {
     pub name: Token,
     pub params: Vec<Token>,
@@ -59,7 +59,7 @@ impl FunctionDeclStmt {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct BlockStmt {
     pub statements: Vec<Stmt>,
 }
@@ -70,7 +70,7 @@ impl BlockStmt {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct IfStmt {
     pub condition: Expr,
     pub then_branch: Box<Stmt>,
@@ -87,7 +87,7 @@ impl IfStmt {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct WhileStmt {
     pub condition: Expr,
     pub body: Box<Stmt>,
@@ -99,7 +99,7 @@ impl WhileStmt {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct ReturnStmt {
     pub keyword: Token,
     pub value: Option<Expr>,
@@ -111,7 +111,7 @@ impl ReturnStmt {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub enum Expr {
     Literal(Box<LiteralExpr>),
     Unary(Box<UnaryExpr>),
@@ -123,7 +123,7 @@ pub enum Expr {
     Call(Box<CallExpr>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct LiteralExpr {
     pub value: Token,
 }
@@ -134,7 +134,7 @@ impl LiteralExpr {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct BinaryExpr {
     pub left: Expr,
     pub operator: Token,
@@ -151,7 +151,7 @@ impl BinaryExpr {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct UnaryExpr {
     pub operator: Token,
     pub right: Expr,
@@ -163,7 +163,7 @@ impl UnaryExpr {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct GroupingExpr {
     pub expression: Expr,
 }
@@ -174,7 +174,7 @@ impl GroupingExpr {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct VariableExpr {
     pub name: Token,
 }
@@ -185,7 +185,7 @@ impl VariableExpr {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct AssignExpr {
     pub name: Token,
     pub value: Expr,
@@ -197,7 +197,7 @@ impl AssignExpr {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct LogicalExpr {
     pub left: Expr,
     pub operator: Token,
@@ -214,7 +214,7 @@ impl LogicalExpr {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct CallExpr {
     pub callee: Expr,
     pub paren: Token,

@@ -150,6 +150,16 @@ impl Environment {
         Err(RuntimeError::UndefinedVariable)
     }
 
+    pub fn get_at(&self, distance: usize, name: &str) -> Result<Value, RuntimeError> {
+        if distance == 0 {
+            return self.get(name);
+        }
+        if let Some(enclosing) = &self.enclosing {
+            return enclosing.borrow().get_at(distance - 1, name);
+        }
+        Err(RuntimeError::UndefinedVariable)
+    }
+
     pub fn assign(&mut self, name: &str, value: Value) -> Result<(), RuntimeError> {
         if self.variables.contains_key(name) {
             self.variables.insert(name.to_string(), value);
@@ -161,10 +171,28 @@ impl Environment {
         }
         Err(RuntimeError::UndefinedVariable)
     }
+
+    pub fn assign_at(
+        &mut self,
+        distance: usize,
+        name: &str,
+        value: Value,
+    ) -> Result<(), RuntimeError> {
+        if distance == 0 {
+            return self.assign(name, value);
+        }
+        if let Some(enclosing) = &mut self.enclosing {
+            return enclosing.borrow_mut().assign_at(distance - 1, name, value);
+        }
+        Err(RuntimeError::UndefinedVariable)
+    }
 }
 
+#[derive(Debug)]
 pub struct Interpreter {
+    globals: Rc<RefCell<Environment>>,
     environment: Rc<RefCell<Environment>>,
+    locals: HashMap<Expr, usize>,
 }
 
 impl Interpreter {
@@ -175,7 +203,9 @@ impl Interpreter {
             Value::Function(Box::new(ClockFunction {})),
         );
         Interpreter {
+            globals: Rc::new(RefCell::new(environment.clone())),
             environment: Rc::new(RefCell::new(environment)),
+            locals: HashMap::new(),
         }
     }
 
@@ -184,6 +214,10 @@ impl Interpreter {
             self.evaluate_stmt(stmt)?;
         }
         Ok(())
+    }
+
+    pub fn resolve(&mut self, expr: Expr, depth: usize) {
+        self.locals.insert(expr, depth);
     }
 
     fn evaluate_stmt(&mut self, stmt: Stmt) -> Result<(), RuntimeError> {
@@ -360,17 +394,27 @@ impl Interpreter {
     }
 
     fn visit_variable_expr(&self, variable: VariableExpr) -> Result<Value, RuntimeError> {
-        match self.environment.borrow().get(&variable.name.lexeme) {
+        let expr = Expr::Variable(Box::new(variable.clone()));
+        match self.look_up_variable(&variable.name.lexeme, &expr) {
             Ok(value) => Ok(value.clone()),
             Err(e) => Err(e),
         }
     }
 
     fn visit_assign_expr(&mut self, assign: AssignExpr) -> Result<Value, RuntimeError> {
-        let value = self.evaluate_expr(assign.value)?;
-        self.environment
-            .borrow_mut()
-            .assign(&assign.name.lexeme, value.clone())?;
+        let value = self.evaluate_expr(assign.clone().value)?;
+        let expr = Expr::Assign(Box::new(assign.clone()));
+        if let Some(distance) = self.locals.get(&expr) {
+            self.environment.borrow_mut().assign_at(
+                *distance,
+                &assign.name.lexeme,
+                value.clone(),
+            )?;
+        } else {
+            self.globals
+                .borrow_mut()
+                .assign(&assign.name.lexeme, value.clone())?;
+        }
         Ok(value)
     }
 
@@ -401,6 +445,14 @@ impl Interpreter {
                 tracing::error!("Can only call functions and classes");
                 Err(RuntimeError::UnexpectedValue)
             }
+        }
+    }
+
+    fn look_up_variable(&self, name: &str, expr: &Expr) -> Result<Value, RuntimeError> {
+        if let Some(distance) = self.locals.get(expr) {
+            self.environment.borrow().get_at(*distance, name)
+        } else {
+            self.globals.borrow().get(name)
         }
     }
 }

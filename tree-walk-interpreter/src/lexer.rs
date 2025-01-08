@@ -53,6 +53,21 @@ pub struct Token {
     pub line: i32,
 }
 
+impl std::cmp::PartialEq for Token {
+    fn eq(&self, other: &Self) -> bool {
+        self.lexeme == other.lexeme
+    }
+}
+
+impl std::cmp::Eq for Token {}
+
+impl std::hash::Hash for Token {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.lexeme.hash(state);
+        self.line.hash(state);
+    }
+}
+
 impl Token {
     pub fn new(r#type: TokenType, lexeme: String, line: i32) -> Self {
         Token {

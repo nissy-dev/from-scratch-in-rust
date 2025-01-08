@@ -1,9 +1,10 @@
-use std::io::Write;
+use std::{cell::RefCell, io::Write, rc::Rc};
 
 mod ast;
 mod interpreter;
 mod lexer;
 mod parser;
+mod resolver;
 
 fn main() {
     tracing_subscriber::fmt::init();
@@ -32,10 +33,13 @@ fn run(source: String) {
     scanner.scan();
     let mut parser = parser::Parser::new(scanner.tokens);
     let stmts = parser.parse();
-    let mut interpreter = interpreter::Interpreter::new();
+    let interpreter = Rc::new(RefCell::new(interpreter::Interpreter::new()));
+    let mut resolver = resolver::Resolver::new(interpreter.clone());
     match stmts {
         Ok(stmts) => {
-            let result = interpreter.interpret(stmts);
+            resolver.resolve(stmts.clone());
+            print!("{:?}", interpreter.borrow());
+            let result = interpreter.borrow_mut().interpret(stmts);
             match result {
                 Ok(_) => {}
                 Err(e) => tracing::error!("{:?}", e),
