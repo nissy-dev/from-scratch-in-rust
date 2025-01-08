@@ -190,9 +190,8 @@ impl Environment {
 
 #[derive(Debug)]
 pub struct Interpreter {
-    globals: Rc<RefCell<Environment>>,
     environment: Rc<RefCell<Environment>>,
-    locals: HashMap<Expr, usize>,
+    pub locals: HashMap<Expr, usize>,
 }
 
 impl Interpreter {
@@ -203,7 +202,6 @@ impl Interpreter {
             Value::Function(Box::new(ClockFunction {})),
         );
         Interpreter {
-            globals: Rc::new(RefCell::new(environment.clone())),
             environment: Rc::new(RefCell::new(environment)),
             locals: HashMap::new(),
         }
@@ -395,10 +393,7 @@ impl Interpreter {
 
     fn visit_variable_expr(&self, variable: VariableExpr) -> Result<Value, RuntimeError> {
         let expr = Expr::Variable(Box::new(variable.clone()));
-        match self.look_up_variable(&variable.name.lexeme, &expr) {
-            Ok(value) => Ok(value.clone()),
-            Err(e) => Err(e),
-        }
+        self.look_up_variable(&variable.name.lexeme, &expr)
     }
 
     fn visit_assign_expr(&mut self, assign: AssignExpr) -> Result<Value, RuntimeError> {
@@ -411,7 +406,7 @@ impl Interpreter {
                 value.clone(),
             )?;
         } else {
-            self.globals
+            self.environment
                 .borrow_mut()
                 .assign(&assign.name.lexeme, value.clone())?;
         }
@@ -452,7 +447,7 @@ impl Interpreter {
         if let Some(distance) = self.locals.get(expr) {
             self.environment.borrow().get_at(*distance, name)
         } else {
-            self.globals.borrow().get(name)
+            self.environment.borrow().get(name)
         }
     }
 }

@@ -38,7 +38,6 @@ fn run(source: String) {
     match stmts {
         Ok(stmts) => {
             resolver.resolve(stmts.clone());
-            print!("{:?}", interpreter.borrow());
             let result = interpreter.borrow_mut().interpret(stmts);
             match result {
                 Ok(_) => {}

@@ -51,11 +51,12 @@ pub struct Token {
     pub r#type: TokenType,
     pub lexeme: String,
     pub line: i32,
+    pub column: i32,
 }
 
 impl std::cmp::PartialEq for Token {
     fn eq(&self, other: &Self) -> bool {
-        self.lexeme == other.lexeme
+        self.line == other.line && self.column == other.column
     }
 }
 
@@ -63,17 +64,18 @@ impl std::cmp::Eq for Token {}
 
 impl std::hash::Hash for Token {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.lexeme.hash(state);
+        self.column.hash(state);
         self.line.hash(state);
     }
 }
 
 impl Token {
-    pub fn new(r#type: TokenType, lexeme: String, line: i32) -> Self {
+    pub fn new(r#type: TokenType, lexeme: String, line: i32, column: i32) -> Self {
         Token {
             r#type,
             lexeme,
             line,
+            column,
         }
     }
 }
@@ -84,6 +86,7 @@ pub struct Scanner {
     start: i32,
     current: i32,
     line: i32,
+    column: i32,
 }
 
 impl Scanner {
@@ -94,6 +97,7 @@ impl Scanner {
             start: 0,
             current: 0,
             line: 1,
+            column: 0,
         }
     }
 
@@ -107,6 +111,7 @@ impl Scanner {
             r#type: TokenType::EOF,
             lexeme: String::new(),
             line: self.line,
+            column: self.column,
         });
     }
 
@@ -171,6 +176,7 @@ impl Scanner {
             }
             '\n' => {
                 self.line += 1;
+                self.column = 0;
             }
             _ if self.is_digit(c) => self.number(),
             _ if self.is_alpha(c) => self.identifier(),
@@ -186,6 +192,7 @@ impl Scanner {
             r#type,
             lexeme: text,
             line: self.line,
+            column: self.column,
         });
     }
 
@@ -208,6 +215,7 @@ impl Scanner {
     fn advance(&mut self) -> char {
         let current_char = self.source.chars().nth(self.current as usize).unwrap();
         self.current += 1;
+        self.column += 1;
         current_char
     }
 
