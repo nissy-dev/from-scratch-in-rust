@@ -136,6 +136,7 @@ pub enum Expr {
     Call(Box<CallExpr>),
     Get(Box<GetExpr>),
     Set(Box<SetExpr>),
+    This(Box<ThisExpr>),
 }
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -272,5 +273,16 @@ impl SetExpr {
             name,
             value,
         }
+    }
+}
+
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub struct ThisExpr {
+    pub keyword: Token,
+}
+
+impl ThisExpr {
+    pub fn new(keyword: Token) -> Self {
+        ThisExpr { keyword }
     }
 }

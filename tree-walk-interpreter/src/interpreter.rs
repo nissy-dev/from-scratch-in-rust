@@ -5,7 +5,7 @@ use crate::{
     ast::{
         AssignExpr, BinaryExpr, BlockStmt, CallExpr, ClassDeclStmt, Expr, ExprStmt,
         FunctionDeclStmt, GetExpr, GroupingExpr, IfStmt, LiteralExpr, LogicalExpr, PrintStmt,
-        ReturnStmt, SetExpr, Stmt, UnaryExpr, VarDeclStmt, VariableExpr, WhileStmt,
+        ReturnStmt, SetExpr, Stmt, ThisExpr, UnaryExpr, VarDeclStmt, VariableExpr, WhileStmt,
     },
     lexer::TokenType,
 };
@@ -81,6 +81,15 @@ impl LoxFunction {
             closure,
         }
     }
+
+    pub fn bind(&self, instance: Rc<RefCell<LoxInstance>>) -> LoxFunction {
+        let mut environment = Environment::new_with_enclosing(self.closure.clone());
+        environment.define("this".to_string(), Value::Instance(instance));
+        LoxFunction {
+            declaration: self.declaration.clone(),
+            closure: Rc::new(RefCell::new(environment)),
+        }
+    }
 }
 
 impl Callable for LoxFunction {
@@ -139,7 +148,8 @@ impl LoxInstance {
         }
 
         if let Some(method) = self.klass.borrow().find_method(name) {
-            return Ok(Value::Function(Box::new(method)));
+            let instance = Rc::new(RefCell::new(self.clone()));
+            return Ok(Value::Function(Box::new(method.bind(instance))));
         }
         tracing::error!("Undefined property '{}'", name);
         Err(RuntimeError::UndefinedProperty)
@@ -421,6 +431,7 @@ impl Interpreter {
             Expr::Call(call) => self.visit_call_expr(*call),
             Expr::Get(get) => self.visit_get_expr(*get),
             Expr::Set(set) => self.visit_set_expr(*set),
+            Expr::This(this) => self.visit_this_expr(*this),
         }
     }
 
@@ -547,6 +558,11 @@ impl Interpreter {
                 Err(RuntimeError::UnexpectedValue)
             }
         }
+    }
+
+    fn visit_this_expr(&self, this: ThisExpr) -> Result<Value, RuntimeError> {
+        let expr = Expr::This(Box::new(this.clone()));
+        self.look_up_variable(&this.keyword.lexeme, &expr)
     }
 
     fn look_up_variable(&self, name: &str, expr: &Expr) -> Result<Value, RuntimeError> {

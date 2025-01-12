@@ -4,7 +4,7 @@ use crate::{
     ast::{
         AssignExpr, BinaryExpr, BlockStmt, CallExpr, ClassDeclStmt, Expr, ExprStmt,
         FunctionDeclStmt, GetExpr, GroupingExpr, IfStmt, LogicalExpr, PrintStmt, ReturnStmt,
-        SetExpr, Stmt, UnaryExpr, VarDeclStmt, VariableExpr, WhileStmt,
+        SetExpr, Stmt, ThisExpr, UnaryExpr, VarDeclStmt, VariableExpr, WhileStmt,
     },
     interpreter::Interpreter,
     lexer::Token,
@@ -14,6 +14,7 @@ use crate::{
 enum FunctionType {
     None,
     Function,
+    Initializer,
     Method,
 }
 
@@ -75,9 +76,19 @@ impl Resolver {
     fn visit_class_decl_stmt(&mut self, class_decl: ClassDeclStmt) {
         self.declare(class_decl.name.clone());
         self.define(class_decl.name.clone());
+        self.begin_scope();
+        self.scopes
+            .last_mut()
+            .unwrap()
+            .insert("this".to_string(), true);
         for method in &class_decl.methods {
             if let Stmt::FunctionDecl(method) = method {
-                self.resolve_function(*method.clone(), FunctionType::Method);
+                let func_type = if method.name.lexeme == "init" {
+                    FunctionType::Initializer
+                } else {
+                    FunctionType::Method
+                };
+                self.resolve_function(*method.clone(), func_type);
             }
         }
         self.end_scope();
@@ -102,6 +113,10 @@ impl Resolver {
     fn visit_return_stmt(&mut self, return_stmt: ReturnStmt) {
         if self.current_function == FunctionType::None {
             tracing::error!("Cannot return from top-level code");
+            return;
+        }
+        if self.current_function == FunctionType::Initializer {
+            tracing::error!("Can't return a value from an initializer.");
             return;
         }
         if let Some(value) = return_stmt.value {
@@ -140,6 +155,7 @@ impl Resolver {
             Expr::Unary(unary) => self.visit_unary_expression(*unary),
             Expr::Get(get) => self.visit_get_expression(*get),
             Expr::Set(set) => self.visit_set_expression(*set),
+            Expr::This(this) => self.visit_this_expression(*this),
             Expr::Literal(_) => {} // do nothing
         }
     }
@@ -198,6 +214,11 @@ impl Resolver {
     fn visit_set_expression(&mut self, set: SetExpr) {
         self.resolve_expr(set.value);
         self.resolve_expr(set.object);
+    }
+
+    fn visit_this_expression(&mut self, this: ThisExpr) {
+        let expr = Expr::This(Box::new(this.clone()));
+        self.resolve_local(expr, this.keyword);
     }
 
     fn resolve_local(&mut self, expr: Expr, name: Token) {

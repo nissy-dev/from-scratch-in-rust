@@ -2,7 +2,7 @@ use crate::{
     ast::{
         AssignExpr, BinaryExpr, BlockStmt, CallExpr, ClassDeclStmt, Expr, ExprStmt,
         FunctionDeclStmt, GetExpr, GroupingExpr, IfStmt, LiteralExpr, LogicalExpr, PrintStmt,
-        ReturnStmt, SetExpr, Stmt, UnaryExpr, VarDeclStmt, VariableExpr, WhileStmt,
+        ReturnStmt, SetExpr, Stmt, ThisExpr, UnaryExpr, VarDeclStmt, VariableExpr, WhileStmt,
     },
     lexer::{Token, TokenType},
 };
@@ -400,6 +400,11 @@ impl Parser {
         ) {
             let token = self.advance();
             return Ok(Expr::Literal(Box::new(LiteralExpr::new(token))));
+        }
+
+        if matches!(self.peek().r#type, TokenType::THIS) {
+            let keyword = self.advance();
+            return Ok(Expr::This(Box::new(ThisExpr::new(keyword))));
         }
 
         if matches!(self.peek().r#type, TokenType::IDENTIFIER) {
