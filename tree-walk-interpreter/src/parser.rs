@@ -1,8 +1,8 @@
 use crate::{
     ast::{
-        AssignExpr, BinaryExpr, BlockStmt, CallExpr, Expr, ExprStmt, FunctionDeclStmt,
-        GroupingExpr, IfStmt, LiteralExpr, LogicalExpr, PrintStmt, ReturnStmt, Stmt, UnaryExpr,
-        VarDeclStmt, VariableExpr, WhileStmt,
+        AssignExpr, BinaryExpr, BlockStmt, CallExpr, ClassDeclStmt, Expr, ExprStmt,
+        FunctionDeclStmt, GetExpr, GroupingExpr, IfStmt, LiteralExpr, LogicalExpr, PrintStmt,
+        ReturnStmt, SetExpr, Stmt, UnaryExpr, VarDeclStmt, VariableExpr, WhileStmt,
     },
     lexer::{Token, TokenType},
 };
@@ -38,6 +38,11 @@ impl Parser {
     }
 
     fn declaration(&mut self) -> Result<Stmt, ParseError> {
+        if matches!(self.peek().r#type, TokenType::CLASS) {
+            self.advance();
+            return self.class_declaration();
+        }
+
         if matches!(self.peek().r#type, TokenType::FUN) {
             self.advance();
             return self.function_declaration();
@@ -49,6 +54,19 @@ impl Parser {
         }
 
         self.statement()
+    }
+
+    fn class_declaration(&mut self) -> Result<Stmt, ParseError> {
+        let name = self.consume(TokenType::IDENTIFIER)?;
+        self.consume(TokenType::LEFT_BRACE)?;
+
+        let mut methods = Vec::new();
+        while !matches!(self.peek().r#type, TokenType::RIGHT_BRACE) && !self.is_at_end() {
+            methods.push(self.function_declaration()?);
+        }
+        self.consume(TokenType::RIGHT_BRACE)?;
+
+        Ok(Stmt::ClassDecl(Box::new(ClassDeclStmt::new(name, methods))))
     }
 
     fn function_declaration(&mut self) -> Result<Stmt, ParseError> {
@@ -252,6 +270,12 @@ impl Parser {
                 ))));
             }
 
+            if let Expr::Get(get) = expr {
+                return Ok(Expr::Set(Box::new(SetExpr::new(
+                    get.object, get.name, value,
+                ))));
+            }
+
             return Err(self.error(&equal, "Invalid assignment target."));
         }
 
@@ -353,6 +377,10 @@ impl Parser {
             if matches!(self.peek().r#type, TokenType::LEFT_PAREN) {
                 self.advance();
                 expr = self.finish_call(expr)?;
+            } else if matches!(self.peek().r#type, TokenType::DOT) {
+                self.advance();
+                let name = self.consume(TokenType::IDENTIFIER)?;
+                expr = Expr::Get(Box::new(GetExpr::new(expr, name)));
             } else {
                 break;
             }

@@ -6,6 +6,7 @@ pub enum Stmt {
     Print(Box<PrintStmt>),
     VarDecl(Box<VarDeclStmt>),
     FunctionDecl(Box<FunctionDeclStmt>),
+    ClassDecl(Box<ClassDeclStmt>),
     Block(Box<BlockStmt>),
     If(Box<IfStmt>),
     While(Box<WhileStmt>),
@@ -56,6 +57,18 @@ pub struct FunctionDeclStmt {
 impl FunctionDeclStmt {
     pub fn new(name: Token, params: Vec<Token>, body: Vec<Stmt>) -> Self {
         FunctionDeclStmt { name, params, body }
+    }
+}
+
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub struct ClassDeclStmt {
+    pub name: Token,
+    pub methods: Vec<Stmt>,
+}
+
+impl ClassDeclStmt {
+    pub fn new(name: Token, methods: Vec<Stmt>) -> Self {
+        ClassDeclStmt { name, methods }
     }
 }
 
@@ -121,6 +134,8 @@ pub enum Expr {
     Assign(Box<AssignExpr>),
     Logical(Box<LogicalExpr>),
     Call(Box<CallExpr>),
+    Get(Box<GetExpr>),
+    Set(Box<SetExpr>),
 }
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -227,6 +242,35 @@ impl CallExpr {
             callee,
             paren,
             arguments,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub struct GetExpr {
+    pub object: Expr,
+    pub name: Token,
+}
+
+impl GetExpr {
+    pub fn new(object: Expr, name: Token) -> Self {
+        GetExpr { object, name }
+    }
+}
+
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub struct SetExpr {
+    pub object: Expr,
+    pub name: Token,
+    pub value: Expr,
+}
+
+impl SetExpr {
+    pub fn new(object: Expr, name: Token, value: Expr) -> Self {
+        SetExpr {
+            object,
+            name,
+            value,
         }
     }
 }

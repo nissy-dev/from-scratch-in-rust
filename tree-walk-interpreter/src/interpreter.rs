@@ -1,15 +1,11 @@
 use core::fmt;
-use std::{
-    cell::RefCell,
-    collections::HashMap,
-    rc::{Rc, Weak},
-};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{
     ast::{
-        AssignExpr, BinaryExpr, BlockStmt, CallExpr, Expr, ExprStmt, FunctionDeclStmt,
-        GroupingExpr, IfStmt, LiteralExpr, LogicalExpr, PrintStmt, ReturnStmt, Stmt, UnaryExpr,
-        VarDeclStmt, VariableExpr, WhileStmt,
+        AssignExpr, BinaryExpr, BlockStmt, CallExpr, ClassDeclStmt, Expr, ExprStmt,
+        FunctionDeclStmt, GetExpr, GroupingExpr, IfStmt, LiteralExpr, LogicalExpr, PrintStmt,
+        ReturnStmt, SetExpr, Stmt, UnaryExpr, VarDeclStmt, VariableExpr, WhileStmt,
     },
     lexer::TokenType,
 };
@@ -19,6 +15,7 @@ pub enum RuntimeError {
     UnexpectedValue,
     UnexpectedOperator,
     UndefinedVariable,
+    UndefinedProperty,
     Return(Option<Value>),
 }
 
@@ -26,9 +23,11 @@ pub enum RuntimeError {
 pub enum Value {
     String(String),
     Number(f64),
-    Null,
+    Nil,
     Boolean(bool),
     Function(Box<dyn Callable>),
+    Class(Rc<RefCell<LoxClass>>),
+    Instance(Rc<RefCell<LoxInstance>>),
 }
 
 pub trait Callable: CallableClone + fmt::Debug {
@@ -70,7 +69,7 @@ impl Callable for ClockFunction {
 }
 
 #[derive(Debug, Clone)]
-struct LoxFunction {
+pub struct LoxFunction {
     declaration: FunctionDeclStmt,
     closure: Rc<RefCell<Environment>>,
 }
@@ -86,21 +85,76 @@ impl LoxFunction {
 
 impl Callable for LoxFunction {
     fn call(&self, interpreter: &mut Interpreter, arguments: Vec<Value>) -> Value {
-        let mut environment = Environment::new_with_enclosing(Rc::downgrade(&self.closure));
+        let mut environment = Environment::new_with_enclosing(self.closure.clone());
         for (param, arg) in self.declaration.params.iter().zip(arguments.iter()) {
             environment.define(param.lexeme.clone(), arg.clone());
         }
         match interpreter.evaluate_block(self.declaration.body.clone(), environment) {
             Err(RuntimeError::Return(Some(value))) => value,
-            _ => Value::Null,
+            _ => Value::Nil,
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LoxClass {
+    name: String,
+    methods: HashMap<String, LoxFunction>,
+}
+
+impl LoxClass {
+    pub fn new(name: String, methods: HashMap<String, LoxFunction>) -> Self {
+        LoxClass { name, methods }
+    }
+
+    pub fn find_method(&self, name: &str) -> Option<LoxFunction> {
+        self.methods.get(name).cloned()
+    }
+}
+
+impl Callable for LoxClass {
+    fn call(&self, _interpreter: &mut Interpreter, _arguments: Vec<Value>) -> Value {
+        let lox_instance = LoxInstance::new(Rc::new(RefCell::new(self.clone())));
+        Value::Instance(Rc::new(RefCell::new(lox_instance)))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LoxInstance {
+    klass: Rc<RefCell<LoxClass>>,
+    fields: HashMap<String, Value>,
+}
+
+impl LoxInstance {
+    pub fn new(klass: Rc<RefCell<LoxClass>>) -> Self {
+        LoxInstance {
+            klass,
+            fields: HashMap::new(),
+        }
+    }
+
+    pub fn get(&self, name: &str) -> Result<Value, RuntimeError> {
+        if let Some(value) = self.fields.get(name) {
+            return Ok(value.clone());
+        }
+
+        if let Some(method) = self.klass.borrow().find_method(name) {
+            return Ok(Value::Function(Box::new(method)));
+        }
+        tracing::error!("Undefined property '{}'", name);
+        Err(RuntimeError::UndefinedProperty)
+    }
+
+    pub fn set(&mut self, name: String, value: Value) -> Result<(), RuntimeError> {
+        self.fields.insert(name, value);
+        Ok(())
     }
 }
 
 impl Value {
     pub fn is_truthy(&self) -> bool {
         match self {
-            Value::Null => false,
+            Value::Nil => false,
             Value::Boolean(val) => *val,
             _ => true,
         }
@@ -112,16 +166,20 @@ impl fmt::Display for Value {
         match self {
             Value::String(val) => write!(f, "{}", val),
             Value::Number(val) => write!(f, "{}", val),
-            Value::Null => write!(f, "nil"),
+            Value::Nil => write!(f, "nil"),
             Value::Boolean(val) => write!(f, "{}", val),
             Value::Function(_) => write!(f, "<fn>"),
+            Value::Class(class) => write!(f, "<class: {}>", class.borrow().name),
+            Value::Instance(instance) => {
+                write!(f, "<instance: {}>", instance.borrow().klass.borrow().name)
+            }
         }
     }
 }
 
 #[derive(Debug, Clone)]
-struct Environment {
-    enclosing: Option<Weak<RefCell<Environment>>>,
+pub struct Environment {
+    enclosing: Option<Rc<RefCell<Environment>>>,
     variables: HashMap<String, Value>,
 }
 
@@ -133,7 +191,7 @@ impl Environment {
         }
     }
 
-    pub fn new_with_enclosing(enclosing: Weak<RefCell<Environment>>) -> Self {
+    pub fn new_with_enclosing(enclosing: Rc<RefCell<Environment>>) -> Self {
         Environment {
             variables: HashMap::new(),
             enclosing: Some(enclosing),
@@ -149,10 +207,9 @@ impl Environment {
             return Ok(value.clone());
         }
         if let Some(enclosing) = &self.enclosing {
-            if let Some(enclosing) = enclosing.upgrade() {
-                return enclosing.borrow().get(name);
-            }
+            return enclosing.borrow().get(name);
         }
+        tracing::error!("Undefined variable '{}'", name);
         Err(RuntimeError::UndefinedVariable)
     }
 
@@ -160,10 +217,8 @@ impl Environment {
         if distance == 0 {
             return self.get(name);
         }
-        if let Some(enclosing) = &self.enclosing {
-            if let Some(enclosing) = enclosing.upgrade() {
-                return enclosing.borrow().get_at(distance - 1, name);
-            }
+        if let Some(enclosing) = self.enclosing.as_ref() {
+            return enclosing.borrow().get_at(distance - 1, name);
         }
         tracing::error!("Undefined variable '{}'", name);
         Err(RuntimeError::UndefinedVariable)
@@ -174,10 +229,8 @@ impl Environment {
             self.variables.insert(name.to_string(), value);
             return Ok(());
         }
-        if let Some(enclosing) = &mut self.enclosing {
-            if let Some(enclosing) = enclosing.upgrade() {
-                return enclosing.borrow_mut().assign(name, value);
-            }
+        if let Some(enclosing) = self.enclosing.as_ref() {
+            return enclosing.borrow_mut().assign(name, value);
         }
         tracing::error!("Undefined variable '{}'", name);
         Err(RuntimeError::UndefinedVariable)
@@ -192,10 +245,8 @@ impl Environment {
         if distance == 0 {
             return self.assign(name, value);
         }
-        if let Some(enclosing) = &mut self.enclosing {
-            if let Some(enclosing) = enclosing.upgrade() {
-                return enclosing.borrow_mut().assign_at(distance - 1, name, value);
-            }
+        if let Some(enclosing) = self.enclosing.as_ref() {
+            return enclosing.borrow_mut().assign_at(distance - 1, name, value);
         }
         tracing::error!("Undefined variable '{}'", name);
         Err(RuntimeError::UndefinedVariable)
@@ -238,6 +289,7 @@ impl Interpreter {
             Stmt::Print(print) => self.visit_print_stmt(*print),
             Stmt::VarDecl(var_decl) => self.visit_var_decl_stmt(*var_decl),
             Stmt::FunctionDecl(function_decl) => self.visit_function_decl_stmt(*function_decl),
+            Stmt::ClassDecl(class_decl) => self.visit_class_decl_stmt(*class_decl),
             Stmt::Block(block) => self.visit_block_stmt(*block),
             Stmt::If(if_stmt) => self.visit_if_stmt(*if_stmt),
             Stmt::While(while_stmt) => self.visit_while_stmt(*while_stmt),
@@ -260,7 +312,7 @@ impl Interpreter {
         let value = if let Some(initializer) = var_decl.initializer {
             self.evaluate_expr(initializer)?
         } else {
-            Value::Null
+            Value::Nil
         };
         self.environment
             .borrow_mut()
@@ -282,8 +334,30 @@ impl Interpreter {
         Ok(())
     }
 
+    fn visit_class_decl_stmt(&mut self, class_decl: ClassDeclStmt) -> Result<(), RuntimeError> {
+        self.environment
+            .borrow_mut()
+            .define(class_decl.name.lexeme.clone(), Value::Nil);
+
+        let mut methods = HashMap::new();
+        for method in class_decl.methods {
+            if let Stmt::FunctionDecl(method) = method {
+                let function = LoxFunction::new(*method.clone(), self.environment.clone());
+                methods.insert(method.name.lexeme.clone(), function);
+            }
+        }
+
+        let klass = Value::Class(Rc::new(RefCell::new(LoxClass::new(
+            class_decl.name.lexeme.clone(),
+            methods,
+        ))));
+        self.environment
+            .borrow_mut()
+            .assign(&class_decl.name.lexeme, klass)
+    }
+
     fn visit_block_stmt(&mut self, block: BlockStmt) -> Result<(), RuntimeError> {
-        let environment = Environment::new_with_enclosing(Rc::downgrade(&self.environment));
+        let environment = Environment::new_with_enclosing(self.environment.clone());
         self.evaluate_block(block.statements, environment)
     }
 
@@ -345,6 +419,8 @@ impl Interpreter {
             Expr::Assign(assign) => self.visit_assign_expr(*assign),
             Expr::Logical(logical) => self.visit_logical_expr(*logical),
             Expr::Call(call) => self.visit_call_expr(*call),
+            Expr::Get(get) => self.visit_get_expr(*get),
+            Expr::Set(set) => self.visit_set_expr(*set),
         }
     }
 
@@ -352,7 +428,7 @@ impl Interpreter {
         match literal.value.r#type {
             TokenType::STRING(val) => Ok(Value::String(val)),
             TokenType::NUMBER(val) => Ok(Value::Number(val)),
-            TokenType::NIL => Ok(Value::Null),
+            TokenType::NIL => Ok(Value::Nil),
             TokenType::FALSE => Ok(Value::Boolean(false)),
             TokenType::TRUE => Ok(Value::Boolean(true)),
             _ => panic!("Unexpected token"),
@@ -437,11 +513,37 @@ impl Interpreter {
         for argument in call.arguments {
             arguments.push(self.evaluate_expr(argument)?);
         }
-
         match callee {
             Value::Function(function) => Ok(function.call(self, arguments)),
+            Value::Class(class) => Ok(class.borrow().call(self, arguments)),
             _ => {
                 tracing::error!("Can only call functions and classes");
+                Err(RuntimeError::UnexpectedValue)
+            }
+        }
+    }
+
+    fn visit_get_expr(&mut self, get: GetExpr) -> Result<Value, RuntimeError> {
+        let object = self.evaluate_expr(get.object)?;
+        match object {
+            Value::Instance(instance) => instance.borrow().get(&get.name.lexeme),
+            _ => {
+                tracing::error!("Only instances have properties");
+                Err(RuntimeError::UnexpectedValue)
+            }
+        }
+    }
+
+    fn visit_set_expr(&mut self, set: SetExpr) -> Result<Value, RuntimeError> {
+        let object = self.evaluate_expr(set.object)?;
+        match object {
+            Value::Instance(instance) => {
+                let value = self.evaluate_expr(set.value)?;
+                instance.borrow_mut().set(set.name.lexeme, value.clone())?;
+                Ok(value)
+            }
+            _ => {
+                tracing::error!("Only instances have fields");
                 Err(RuntimeError::UnexpectedValue)
             }
         }

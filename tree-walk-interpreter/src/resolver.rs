@@ -2,17 +2,25 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{
     ast::{
-        AssignExpr, BinaryExpr, BlockStmt, CallExpr, Expr, ExprStmt, FunctionDeclStmt,
-        GroupingExpr, IfStmt, LogicalExpr, PrintStmt, ReturnStmt, Stmt, UnaryExpr, VarDeclStmt,
-        VariableExpr, WhileStmt,
+        AssignExpr, BinaryExpr, BlockStmt, CallExpr, ClassDeclStmt, Expr, ExprStmt,
+        FunctionDeclStmt, GetExpr, GroupingExpr, IfStmt, LogicalExpr, PrintStmt, ReturnStmt,
+        SetExpr, Stmt, UnaryExpr, VarDeclStmt, VariableExpr, WhileStmt,
     },
     interpreter::Interpreter,
     lexer::Token,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum FunctionType {
+    None,
+    Function,
+    Method,
+}
+
 pub struct Resolver {
     interpreter: Rc<RefCell<Interpreter>>,
     scopes: Vec<HashMap<String, bool>>,
+    current_function: FunctionType,
 }
 
 impl Resolver {
@@ -20,6 +28,7 @@ impl Resolver {
         Resolver {
             interpreter,
             scopes: vec![HashMap::new()],
+            current_function: FunctionType::None,
         }
     }
 
@@ -34,6 +43,7 @@ impl Resolver {
             Stmt::Block(block) => self.visit_block_stmt(*block),
             Stmt::VarDecl(var_decl) => self.visit_var_decl_stmt(*var_decl),
             Stmt::FunctionDecl(func_decl) => self.visit_function_decl_stmt(*func_decl),
+            Stmt::ClassDecl(class_decl) => self.visit_class_decl_stmt(*class_decl),
             Stmt::Expr(expr) => self.visit_expr_stmt(*expr),
             Stmt::If(if_stmt) => self.visit_if_stmt(*if_stmt),
             Stmt::Print(print) => self.visit_print_stmt(*print),
@@ -59,7 +69,18 @@ impl Resolver {
     fn visit_function_decl_stmt(&mut self, func_decl: FunctionDeclStmt) {
         self.declare(func_decl.name.clone());
         self.define(func_decl.name.clone());
-        self.resolve_function(func_decl);
+        self.resolve_function(func_decl, FunctionType::Function);
+    }
+
+    fn visit_class_decl_stmt(&mut self, class_decl: ClassDeclStmt) {
+        self.declare(class_decl.name.clone());
+        self.define(class_decl.name.clone());
+        for method in &class_decl.methods {
+            if let Stmt::FunctionDecl(method) = method {
+                self.resolve_function(*method.clone(), FunctionType::Method);
+            }
+        }
+        self.end_scope();
     }
 
     fn visit_expr_stmt(&mut self, expr: ExprStmt) {
@@ -79,6 +100,10 @@ impl Resolver {
     }
 
     fn visit_return_stmt(&mut self, return_stmt: ReturnStmt) {
+        if self.current_function == FunctionType::None {
+            tracing::error!("Cannot return from top-level code");
+            return;
+        }
         if let Some(value) = return_stmt.value {
             self.resolve_expr(value);
         }
@@ -89,7 +114,9 @@ impl Resolver {
         self.resolve_stmt(*while_stmt.body);
     }
 
-    fn resolve_function(&mut self, func_decl: FunctionDeclStmt) {
+    fn resolve_function(&mut self, func_decl: FunctionDeclStmt, func_type: FunctionType) {
+        let enclosing_function = self.current_function;
+        self.current_function = func_type;
         self.begin_scope();
         for param in &func_decl.params {
             self.declare(param.clone());
@@ -99,6 +126,7 @@ impl Resolver {
             self.resolve_stmt(stmt.clone());
         }
         self.end_scope();
+        self.current_function = enclosing_function;
     }
 
     fn resolve_expr(&mut self, expr: Expr) {
@@ -110,6 +138,8 @@ impl Resolver {
             Expr::Grouping(grouping) => self.visit_grouping_expression(*grouping),
             Expr::Logical(logical) => self.visit_logical_expression(*logical),
             Expr::Unary(unary) => self.visit_unary_expression(*unary),
+            Expr::Get(get) => self.visit_get_expression(*get),
+            Expr::Set(set) => self.visit_set_expression(*set),
             Expr::Literal(_) => {} // do nothing
         }
     }
@@ -159,6 +189,15 @@ impl Resolver {
 
     fn visit_unary_expression(&mut self, unary: UnaryExpr) {
         self.resolve_expr(unary.right);
+    }
+
+    fn visit_get_expression(&mut self, get: GetExpr) {
+        self.resolve_expr(get.object);
+    }
+
+    fn visit_set_expression(&mut self, set: SetExpr) {
+        self.resolve_expr(set.value);
+        self.resolve_expr(set.object);
     }
 
     fn resolve_local(&mut self, expr: Expr, name: Token) {

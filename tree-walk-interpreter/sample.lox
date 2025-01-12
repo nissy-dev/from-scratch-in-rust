@@ -60,3 +60,23 @@ var a = "global";
   var a = "block";
   showA();
 }
+
+print "=== class ===";
+
+class Bacon {
+  eat() {
+    print "Crunch crunch crunch!";
+  }
+}
+
+Bacon().eat(); // Prints "Crunch crunch crunch!".
+
+class Box {}
+
+fun notMethod(argument) {
+  print "called function with " + argument;
+}
+
+var box = Box();
+box.function = notMethod;
+box.function("argument");
