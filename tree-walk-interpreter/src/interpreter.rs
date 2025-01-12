@@ -1,5 +1,9 @@
 use core::fmt;
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    rc::{Rc, Weak},
+};
 
 use crate::{
     ast::{
@@ -82,7 +86,7 @@ impl LoxFunction {
 
 impl Callable for LoxFunction {
     fn call(&self, interpreter: &mut Interpreter, arguments: Vec<Value>) -> Value {
-        let mut environment = Environment::new_with_enclosing(self.closure.clone());
+        let mut environment = Environment::new_with_enclosing(Rc::downgrade(&self.closure));
         for (param, arg) in self.declaration.params.iter().zip(arguments.iter()) {
             environment.define(param.lexeme.clone(), arg.clone());
         }
@@ -117,7 +121,7 @@ impl fmt::Display for Value {
 
 #[derive(Debug, Clone)]
 struct Environment {
-    enclosing: Option<Rc<RefCell<Environment>>>,
+    enclosing: Option<Weak<RefCell<Environment>>>,
     variables: HashMap<String, Value>,
 }
 
@@ -129,7 +133,7 @@ impl Environment {
         }
     }
 
-    pub fn new_with_enclosing(enclosing: Rc<RefCell<Environment>>) -> Self {
+    pub fn new_with_enclosing(enclosing: Weak<RefCell<Environment>>) -> Self {
         Environment {
             variables: HashMap::new(),
             enclosing: Some(enclosing),
@@ -145,7 +149,9 @@ impl Environment {
             return Ok(value.clone());
         }
         if let Some(enclosing) = &self.enclosing {
-            return enclosing.borrow().get(name);
+            if let Some(enclosing) = enclosing.upgrade() {
+                return enclosing.borrow().get(name);
+            }
         }
         Err(RuntimeError::UndefinedVariable)
     }
@@ -155,8 +161,11 @@ impl Environment {
             return self.get(name);
         }
         if let Some(enclosing) = &self.enclosing {
-            return enclosing.borrow().get_at(distance - 1, name);
+            if let Some(enclosing) = enclosing.upgrade() {
+                return enclosing.borrow().get_at(distance - 1, name);
+            }
         }
+        tracing::error!("Undefined variable '{}'", name);
         Err(RuntimeError::UndefinedVariable)
     }
 
@@ -166,9 +175,11 @@ impl Environment {
             return Ok(());
         }
         if let Some(enclosing) = &mut self.enclosing {
-            enclosing.borrow_mut().assign(name, value)?;
-            return Ok(());
+            if let Some(enclosing) = enclosing.upgrade() {
+                return enclosing.borrow_mut().assign(name, value);
+            }
         }
+        tracing::error!("Undefined variable '{}'", name);
         Err(RuntimeError::UndefinedVariable)
     }
 
@@ -182,8 +193,11 @@ impl Environment {
             return self.assign(name, value);
         }
         if let Some(enclosing) = &mut self.enclosing {
-            return enclosing.borrow_mut().assign_at(distance - 1, name, value);
+            if let Some(enclosing) = enclosing.upgrade() {
+                return enclosing.borrow_mut().assign_at(distance - 1, name, value);
+            }
         }
+        tracing::error!("Undefined variable '{}'", name);
         Err(RuntimeError::UndefinedVariable)
     }
 }
@@ -269,7 +283,7 @@ impl Interpreter {
     }
 
     fn visit_block_stmt(&mut self, block: BlockStmt) -> Result<(), RuntimeError> {
-        let environment = Environment::new_with_enclosing(self.environment.clone());
+        let environment = Environment::new_with_enclosing(Rc::downgrade(&self.environment));
         self.evaluate_block(block.statements, environment)
     }
 
