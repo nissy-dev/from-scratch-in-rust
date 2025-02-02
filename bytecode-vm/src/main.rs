@@ -4,6 +4,7 @@ mod compiler;
 mod lexer;
 mod parser;
 mod token;
+mod value;
 mod vm;
 
 fn main() {
@@ -32,8 +33,8 @@ fn run(source: String) {
     let mut compiler = compiler::Compiler::new(source);
     match compiler.compile() {
         Ok(_) => {
-            println!("OpCodes: {:?}", compiler.op_codes);
-            let mut vm = vm::VirtualMachine::new(compiler.op_codes);
+            println!("OpCodes: {:?}", compiler.codes);
+            let mut vm = vm::VirtualMachine::new(compiler.codes);
             match vm.interpret() {
                 Ok(_) => {}
                 Err(error) => {

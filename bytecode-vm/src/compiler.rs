@@ -4,6 +4,7 @@ use crate::{
     lexer::Scanner,
     parser::{ParseError, Parser},
     token::{Location, Precedence, Token, TokenType},
+    value::Value,
 };
 
 #[derive(Debug, Copy, Clone)]
@@ -15,11 +16,13 @@ pub enum OpCode {
     Subtract,
     Multiply,
     Divide,
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum Value {
-    Number(f64),
+    Nil,
+    True,
+    False,
+    Not,
+    Equal,
+    Greater,
+    Less,
 }
 
 pub type OpCodes = VecDeque<(OpCode, Location)>;
@@ -39,14 +42,14 @@ impl From<ParseError> for CompileError {
 #[derive(Debug)]
 pub struct Compiler {
     parser: Parser,
-    pub op_codes: OpCodes,
+    pub codes: OpCodes,
 }
 
 impl Compiler {
     pub fn new(source: String) -> Self {
         Compiler {
             parser: Parser::new(Scanner::new(source)),
-            op_codes: VecDeque::new(),
+            codes: VecDeque::new(),
         }
     }
 
@@ -83,6 +86,7 @@ impl Compiler {
         self.parse_precedence(Precedence::Unary)?;
         match token.r#type {
             TokenType::MINUS => self.write_op_code(OpCode::Negate)?,
+            TokenType::BANG => self.write_op_code(OpCode::Not)?,
             _ => {
                 tracing::error!("Invalid operator: {:?}", token.r#type);
                 return Err(CompileError::InvalidOperator);
@@ -93,14 +97,28 @@ impl Compiler {
 
     fn binary(&mut self) -> Result<(), CompileError> {
         let token = self.parser.previous_token()?;
-        let precedence = token.precedence();
-        self.parse_precedence(precedence.next())?;
+        self.parse_precedence(token.precedence().next())?;
 
         match token.r#type {
             TokenType::MINUS => self.write_op_code(OpCode::Subtract)?,
             TokenType::PLUS => self.write_op_code(OpCode::Add)?,
             TokenType::STAR => self.write_op_code(OpCode::Multiply)?,
             TokenType::SLASH => self.write_op_code(OpCode::Divide)?,
+            TokenType::BANG_EQUAL => {
+                self.write_op_code(OpCode::Equal)?;
+                self.write_op_code(OpCode::Not)?;
+            }
+            TokenType::EQUAL_EQUAL => self.write_op_code(OpCode::Equal)?,
+            TokenType::GREATER => self.write_op_code(OpCode::Greater)?,
+            TokenType::GREATER_EQUAL => {
+                self.write_op_code(OpCode::Less)?;
+                self.write_op_code(OpCode::Not)?;
+            }
+            TokenType::LESS => self.write_op_code(OpCode::Less)?,
+            TokenType::LESS_EQUAL => {
+                self.write_op_code(OpCode::Greater)?;
+                self.write_op_code(OpCode::Not)?;
+            }
             _ => {
                 tracing::error!("Invalid binary operator: {:?}", token.r#type);
                 return Err(CompileError::InvalidOperator);
@@ -110,11 +128,25 @@ impl Compiler {
         Ok(())
     }
 
+    fn literal(&mut self) -> Result<(), CompileError> {
+        let token = self.parser.previous_token()?;
+        match token.r#type {
+            TokenType::FALSE => self.write_op_code(OpCode::False),
+            TokenType::NIL => self.write_op_code(OpCode::Nil),
+            TokenType::TRUE => self.write_op_code(OpCode::True),
+            _ => {
+                tracing::error!("Invalid literal: {:?}", token.r#type);
+                return Err(CompileError::InvalidOperator);
+            }
+        }
+    }
+
     fn parse_prefix_expr(&mut self, token: &Token) -> Result<(), CompileError> {
         match token.r#type {
             TokenType::NUMBER(value) => self.number(value),
             TokenType::LEFT_PAREN => self.grouping(),
-            TokenType::MINUS => self.unary(),
+            TokenType::MINUS | TokenType::BANG => self.unary(),
+            TokenType::FALSE | TokenType::NIL | TokenType::TRUE => self.literal(),
             _ => Ok(()),
         }
     }
@@ -124,6 +156,12 @@ impl Compiler {
             TokenType::MINUS | TokenType::PLUS | TokenType::STAR | TokenType::SLASH => {
                 self.binary()
             }
+            TokenType::EQUAL_EQUAL
+            | TokenType::BANG_EQUAL
+            | TokenType::GREATER
+            | TokenType::GREATER_EQUAL
+            | TokenType::LESS
+            | TokenType::LESS_EQUAL => self.binary(),
             _ => Ok(()),
         }
     }
@@ -152,9 +190,9 @@ impl Compiler {
         Ok(())
     }
 
-    fn write_op_code(&mut self, instruction: OpCode) -> Result<(), CompileError> {
-        self.op_codes
-            .push_back((instruction, self.parser.previous_token()?.location));
+    fn write_op_code(&mut self, code: OpCode) -> Result<(), CompileError> {
+        self.codes
+            .push_back((code, self.parser.previous_token()?.location));
         Ok(())
     }
 }
