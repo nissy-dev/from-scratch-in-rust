@@ -4,10 +4,10 @@ use crate::{
     lexer::Scanner,
     parser::{ParseError, Parser},
     token::{Location, Precedence, Token, TokenType},
-    value::Value,
+    value::{Object, Value},
 };
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub enum OpCode {
     Return,
     Constant(Value),
@@ -42,7 +42,7 @@ impl From<ParseError> for CompileError {
 #[derive(Debug)]
 pub struct Compiler {
     parser: Parser,
-    pub codes: OpCodes,
+    codes: OpCodes,
 }
 
 impl Compiler {
@@ -53,14 +53,13 @@ impl Compiler {
         }
     }
 
-    pub fn compile(&mut self) -> Result<(), CompileError> {
+    pub fn compile(&mut self) -> Result<OpCodes, CompileError> {
         self.parser.advance()?;
         self.expression()?;
         self.parser
             .consume(TokenType::EOF, "Expect end of expression")?;
         self.write_op_code(OpCode::Return)?;
-
-        Ok(())
+        Ok(self.codes.clone())
     }
 
     fn expression(&mut self) -> Result<(), CompileError> {
@@ -71,6 +70,12 @@ impl Compiler {
     fn number(&mut self, value: f64) -> Result<(), CompileError> {
         let value = Value::Number(value);
         self.write_op_code(OpCode::Constant(value))?;
+        Ok(())
+    }
+
+    fn string(&mut self, value: String) -> Result<(), CompileError> {
+        let object = Object::String(value);
+        self.write_op_code(OpCode::Constant(Value::Object(object)))?;
         Ok(())
     }
 
@@ -141,9 +146,10 @@ impl Compiler {
         }
     }
 
-    fn parse_prefix_expr(&mut self, token: &Token) -> Result<(), CompileError> {
+    fn parse_prefix_expr(&mut self, token: Token) -> Result<(), CompileError> {
         match token.r#type {
             TokenType::NUMBER(value) => self.number(value),
+            TokenType::STRING(value) => self.string(value),
             TokenType::LEFT_PAREN => self.grouping(),
             TokenType::MINUS | TokenType::BANG => self.unary(),
             TokenType::FALSE | TokenType::NIL | TokenType::TRUE => self.literal(),
@@ -151,7 +157,7 @@ impl Compiler {
         }
     }
 
-    fn parse_infix_expr(&mut self, token: &Token) -> Result<(), CompileError> {
+    fn parse_infix_expr(&mut self, token: Token) -> Result<(), CompileError> {
         match token.r#type {
             TokenType::MINUS | TokenType::PLUS | TokenType::STAR | TokenType::SLASH => {
                 self.binary()
@@ -182,10 +188,10 @@ impl Compiler {
     fn parse_precedence(&mut self, precedence: Precedence) -> Result<(), CompileError> {
         self.parser.advance()?;
         // TODO: prefix expression がない場合は early return しているが、ここはそうなっていない
-        self.parse_prefix_expr(&self.parser.previous_token()?)?;
+        self.parse_prefix_expr(self.parser.previous_token()?)?;
         while precedence <= self.precedence(&self.parser.current_token()?) {
             self.parser.advance()?;
-            self.parse_infix_expr(&self.parser.previous_token()?)?;
+            self.parse_infix_expr(self.parser.previous_token()?)?;
         }
         Ok(())
     }

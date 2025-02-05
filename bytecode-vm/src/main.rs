@@ -32,11 +32,14 @@ fn main() {
 fn run(source: String) {
     let mut compiler = compiler::Compiler::new(source);
     match compiler.compile() {
-        Ok(_) => {
-            println!("OpCodes: {:?}", compiler.codes);
-            let mut vm = vm::VirtualMachine::new(compiler.codes);
+        Ok(codes) => {
+            println!("OpCodes: {:?}", codes);
+            let mut vm = vm::VirtualMachine::new(codes);
             match vm.interpret() {
-                Ok(_) => {}
+                Ok(_) => {
+                    tracing::info!("Interpretation completed");
+                    println!("ObjectList: {:?}", vm.object_list);
+                }
                 Err(error) => {
                     tracing::error!("Error: {:?}", error);
                 }
