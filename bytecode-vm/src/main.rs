@@ -3,6 +3,7 @@ use std::io::Write;
 mod compiler;
 mod lexer;
 mod parser;
+mod table;
 mod token;
 mod value;
 mod vm;
@@ -33,12 +34,10 @@ fn run(source: String) {
     let mut compiler = compiler::Compiler::new(source);
     match compiler.compile() {
         Ok(codes) => {
-            println!("OpCodes: {:?}", codes);
             let mut vm = vm::VirtualMachine::new(codes);
             match vm.interpret() {
                 Ok(_) => {
                     tracing::info!("Interpretation completed");
-                    println!("ObjectList: {:?}", vm.object_list);
                 }
                 Err(error) => {
                     tracing::error!("Error: {:?}", error);

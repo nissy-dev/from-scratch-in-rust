@@ -24,6 +24,22 @@ impl Parser {
         }
     }
 
+    pub fn match_token(&mut self, token_type: TokenType) -> Result<bool, ParseError> {
+        if !self.check_token(token_type) {
+            return Ok(false);
+        }
+        self.advance()?;
+        Ok(true)
+    }
+
+    pub fn check_token(&self, token_type: TokenType) -> bool {
+        if let Some(token) = &self.current {
+            token.r#type == token_type
+        } else {
+            false
+        }
+    }
+
     pub fn advance(&mut self) -> Result<(), ParseError> {
         self.previous = self.current.take();
         loop {
@@ -38,9 +54,9 @@ impl Parser {
         Ok(())
     }
 
-    pub fn consume(&mut self, r#type: TokenType, message: &str) -> Result<(), ParseError> {
+    pub fn consume(&mut self, token_type: TokenType, message: &str) -> Result<(), ParseError> {
         if let Some(token) = &self.current {
-            if token.r#type == r#type {
+            if token.r#type == token_type {
                 return self.advance();
             }
             return self.report_error(token, message);

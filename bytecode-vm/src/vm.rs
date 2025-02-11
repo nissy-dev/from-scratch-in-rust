@@ -1,7 +1,6 @@
-use std::{cell::RefCell, rc::Rc};
-
 use crate::{
     compiler::{OpCode, OpCodes},
+    table::Table,
     token::Location,
     value::{Object, Value},
 };
@@ -13,17 +12,18 @@ pub enum InterpretError {
     RuntimeError,
 }
 
-#[derive(Debug)]
-pub struct ObjectNode {
-    value: Object,
-    next: Option<Rc<RefCell<ObjectNode>>>,
-}
+// #[derive(Debug)]
+// pub struct ObjectNode {
+//     value: Object,
+//     next: Option<Rc<RefCell<ObjectNode>>>,
+// }
 
 #[derive(Debug)]
 pub struct VirtualMachine {
     codes: OpCodes,
     stack: Vec<Value>,
-    pub object_list: Option<Rc<RefCell<ObjectNode>>>,
+    globals: Table,
+    // pub object_list: Option<Rc<RefCell<ObjectNode>>>,
 }
 
 impl VirtualMachine {
@@ -31,7 +31,8 @@ impl VirtualMachine {
         VirtualMachine {
             codes,
             stack: Vec::with_capacity(STACK_MAX),
-            object_list: None,
+            globals: Table::new(30),
+            // object_list: None,
         }
     }
 
@@ -56,6 +57,11 @@ impl VirtualMachine {
                 OpCode::Equal => self.binary_op(|a, b| Value::Boolean(a == b), &loc)?,
                 OpCode::Greater => self.binary_op(|a, b| Value::Boolean(a > b), &loc)?,
                 OpCode::Less => self.binary_op(|a, b| Value::Boolean(a < b), &loc)?,
+                OpCode::Print => self.print_op(&loc)?,
+                OpCode::Pop => self.pop_op(&loc)?,
+                OpCode::DefineGlobal => self.define_global_op(&loc)?,
+                OpCode::GetGlobal => self.get_global_op(&loc)?,
+                OpCode::SetGlobal => self.set_global_op(&loc)?,
             }
         }
 
@@ -63,11 +69,7 @@ impl VirtualMachine {
     }
 
     fn return_op(&mut self, loc: &Location) -> Result<(), InterpretError> {
-        if let Some(value) = self.stack.pop() {
-            println!("{:?}", value);
-            return Ok(());
-        }
-        self.report_error(loc, "No value to return")
+        Ok(())
     }
 
     fn negate_op(&mut self, loc: &Location) -> Result<(), InterpretError> {
@@ -104,13 +106,71 @@ impl VirtualMachine {
         }
     }
 
-    fn stack_push(&mut self, value: Value) {
-        if let Value::Object(object) = value.clone() {
-            self.object_list = Some(Rc::new(RefCell::new(ObjectNode {
-                value: object,
-                next: self.object_list.clone(),
-            })));
+    fn print_op(&mut self, loc: &Location) -> Result<(), InterpretError> {
+        if let Some(value) = self.stack.pop() {
+            println!("{}", value);
+            Ok(())
+        } else {
+            self.report_error(loc, "No value to print")
         }
+    }
+
+    fn pop_op(&mut self, loc: &Location) -> Result<(), InterpretError> {
+        if self.stack.is_empty() {
+            self.report_error(loc, "No value to pop")
+        } else {
+            self.stack.pop();
+            Ok(())
+        }
+    }
+
+    fn define_global_op(&mut self, loc: &Location) -> Result<(), InterpretError> {
+        match (self.stack.pop(), self.stack.pop()) {
+            (Some(value), Some(Value::Object(Object::String(key)))) => {
+                self.globals.set(&key, value);
+                Ok(())
+            }
+            _ => self.report_error(loc, "No String object to define"),
+        }
+    }
+
+    fn get_global_op(&mut self, loc: &Location) -> Result<(), InterpretError> {
+        match self.stack.pop() {
+            Some(Value::Object(Object::String(key))) => {
+                if let Some(value) = self.globals.get(&key) {
+                    self.stack_push(value.clone());
+                    Ok(())
+                } else {
+                    self.report_error(loc, "Undefined variable")
+                }
+            }
+            _ => self.report_error(loc, "No String object to get"),
+        }
+    }
+
+    fn set_global_op(&mut self, loc: &Location) -> Result<(), InterpretError> {
+        match (self.stack.pop(), self.stack.pop()) {
+            (Some(value), Some(Value::Object(Object::String(key)))) => {
+                if self.globals.get(&key).is_none() {
+                    self.report_error(loc, "Undefined variable")
+                } else {
+                    self.globals.set(&key, value);
+                    // 代入後に参照されるかもしれないので identifier は戻す
+                    self.stack_push(Value::Object(Object::String(key)));
+                    Ok(())
+                }
+            }
+            _ => self.report_error(loc, "No String object to set"),
+        }
+    }
+
+    fn stack_push(&mut self, value: Value) {
+        // if let Value::Object(object) = value.clone() {
+        //     self.object_list = Some(Rc::new(RefCell::new(ObjectNode {
+        //         value: object,
+        //         next: self.object_list.clone(),
+        //     })));
+        // }
         self.stack.push(value);
     }
 

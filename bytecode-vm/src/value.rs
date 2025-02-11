@@ -1,4 +1,4 @@
-use std::ops;
+use std::{fmt, ops};
 
 #[derive(Debug, Clone, PartialOrd)]
 pub enum Value {
@@ -76,6 +76,25 @@ impl ops::Div<Value> for Value {
         match (&self, &rhs) {
             (Value::Number(a), Value::Number(b)) => Value::Number(a / b),
             _ => panic!("unsupported operation: {:?} / {:?}", self, rhs),
+        }
+    }
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Value::Number(val) => write!(f, "{}", val),
+            Value::Boolean(val) => write!(f, "{}", val),
+            Value::Nil => write!(f, "nil"),
+            Value::Object(val) => write!(f, "{}", val),
+        }
+    }
+}
+
+impl fmt::Display for Object {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Object::String(val) => write!(f, "{}", val),
         }
     }
 }
