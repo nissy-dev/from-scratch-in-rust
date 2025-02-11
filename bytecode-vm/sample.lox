@@ -6,3 +6,15 @@ var breakfast = "beignets";
 var beverage = "cafe au lait";
 breakfast = "beignets with " + beverage;
 print breakfast;
+
+{
+  var a = "hello";
+  print a;
+  {
+    print a;
+    {
+      a = a + " world!";
+      print a;
+    }
+  }
+}

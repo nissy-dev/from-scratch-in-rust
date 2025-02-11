@@ -37,10 +37,6 @@ impl VirtualMachine {
     }
 
     pub fn interpret(&mut self) -> Result<(), InterpretError> {
-        self.run()
-    }
-
-    fn run(&mut self) -> Result<(), InterpretError> {
         while let Some((instruction, loc)) = self.codes.pop_front() {
             match instruction {
                 OpCode::Return => self.return_op(&loc)?,
@@ -62,13 +58,15 @@ impl VirtualMachine {
                 OpCode::DefineGlobal => self.define_global_op(&loc)?,
                 OpCode::GetGlobal => self.get_global_op(&loc)?,
                 OpCode::SetGlobal => self.set_global_op(&loc)?,
+                OpCode::GetLocal(slot) => self.get_local_op(slot, &loc)?,
+                OpCode::SetLocal(slot) => self.set_local_op(slot, &loc)?,
             }
         }
 
         Ok(())
     }
 
-    fn return_op(&mut self, loc: &Location) -> Result<(), InterpretError> {
+    fn return_op(&mut self, _loc: &Location) -> Result<(), InterpretError> {
         Ok(())
     }
 
@@ -130,7 +128,7 @@ impl VirtualMachine {
                 self.globals.set(&key, value);
                 Ok(())
             }
-            _ => self.report_error(loc, "No String object to define"),
+            _ => self.report_error(loc, "No valid values to define"),
         }
     }
 
@@ -141,26 +139,43 @@ impl VirtualMachine {
                     self.stack_push(value.clone());
                     Ok(())
                 } else {
-                    self.report_error(loc, "Undefined variable")
+                    self.report_error(loc, "Undefined global variable")
                 }
             }
-            _ => self.report_error(loc, "No String object to get"),
+            _ => self.report_error(loc, "No valid values to get"),
         }
     }
 
     fn set_global_op(&mut self, loc: &Location) -> Result<(), InterpretError> {
-        match (self.stack.pop(), self.stack.pop()) {
+        match (self.stack.pop(), self.stack.last()) {
             (Some(value), Some(Value::Object(Object::String(key)))) => {
                 if self.globals.get(&key).is_none() {
-                    self.report_error(loc, "Undefined variable")
+                    self.report_error(loc, "Undefined global variable")
                 } else {
                     self.globals.set(&key, value);
-                    // 代入後に参照されるかもしれないので identifier は戻す
-                    self.stack_push(Value::Object(Object::String(key)));
                     Ok(())
                 }
             }
-            _ => self.report_error(loc, "No String object to set"),
+            _ => self.report_error(loc, "No valid values to set"),
+        }
+    }
+
+    fn get_local_op(&mut self, slot: usize, loc: &Location) -> Result<(), InterpretError> {
+        if let Some(value) = self.stack.get(slot) {
+            self.stack_push(value.clone());
+            Ok(())
+        } else {
+            self.report_error(loc, "Undefined local variable")
+        }
+    }
+
+    fn set_local_op(&mut self, slot: usize, loc: &Location) -> Result<(), InterpretError> {
+        match (self.stack.last(), self.stack.get(slot)) {
+            (Some(value), Some(_)) => {
+                self.stack[slot] = value.clone();
+                Ok(())
+            }
+            _ => self.report_error(loc, "No valid values to set"),
         }
     }
 

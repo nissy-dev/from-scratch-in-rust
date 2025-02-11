@@ -28,6 +28,8 @@ pub enum OpCode {
     DefineGlobal,
     GetGlobal,
     SetGlobal,
+    GetLocal(usize),
+    SetLocal(usize),
 }
 
 pub type OpCodes = VecDeque<(OpCode, Location)>;
@@ -45,10 +47,24 @@ impl From<ParseError> for CompileError {
     }
 }
 
+#[derive(Debug, Clone)]
+struct Local {
+    name: String,
+    depth: isize,
+}
+
+impl Local {
+    fn new(name: String) -> Self {
+        Local { name, depth: -1 }
+    }
+}
+
 #[derive(Debug)]
 pub struct Compiler {
     parser: Parser,
     codes: OpCodes,
+    locals: Vec<Local>,
+    scope_depth: isize,
 }
 
 impl Compiler {
@@ -56,6 +72,8 @@ impl Compiler {
         Compiler {
             parser: Parser::new(Scanner::new(source)),
             codes: VecDeque::new(),
+            locals: Vec::new(),
+            scope_depth: 0,
         }
     }
 
@@ -89,12 +107,16 @@ impl Compiler {
             TokenType::SEMICOLON,
             "Expect ';' after variable declaration",
         )?;
-        self.write_op_code(OpCode::DefineGlobal)
+        self.define_variable()
     }
 
     fn statement(&mut self) -> Result<(), CompileError> {
         if self.parser.match_token(TokenType::PRINT)? {
             self.print_statement()
+        } else if self.parser.match_token(TokenType::LEFT_BRACE)? {
+            self.begin_scope();
+            self.block()?;
+            self.end_scope()
         } else {
             self.expression_statement()
         }
@@ -105,6 +127,17 @@ impl Compiler {
         self.parser
             .consume(TokenType::SEMICOLON, "Expect ';' after value")?;
         self.write_op_code(OpCode::Print)
+    }
+
+    fn block(&mut self) -> Result<(), CompileError> {
+        while !self.parser.check_token(TokenType::RIGHT_BRACE)
+            && !self.parser.check_token(TokenType::EOF)
+        {
+            self.declaration()?;
+        }
+        self.parser
+            .consume(TokenType::RIGHT_BRACE, "Expect '}' after block")?;
+        Ok(())
     }
 
     fn expression_statement(&mut self) -> Result<(), CompileError> {
@@ -258,19 +291,72 @@ impl Compiler {
 
     fn parse_variable(&mut self, error_msg: &str) -> Result<(), CompileError> {
         self.parser.consume(TokenType::IDENTIFIER, error_msg)?;
+        self.declare_variable()?;
+
+        // local variable の処理
+        if self.scope_depth > 0 {
+            return Ok(());
+        }
+
+        // global variable の処理
         let token = self.parser.previous_token()?;
         let value = Value::Object(Object::String(token.lexeme));
         self.write_op_code(OpCode::Constant(value))
     }
 
+    fn define_variable(&mut self) -> Result<(), CompileError> {
+        // local variable の処理
+        if self.scope_depth > 0 {
+            if let Some(local) = self.locals.last_mut() {
+                (*local).depth = self.scope_depth;
+            }
+            return Ok(());
+        }
+
+        // global variable の処理
+        self.write_op_code(OpCode::DefineGlobal)
+    }
+
+    fn declare_variable(&mut self) -> Result<(), CompileError> {
+        // global variable の処理
+        if self.scope_depth == 0 {
+            return Ok(());
+        }
+
+        // local variable の処理
+        let name = self.parser.previous_token()?.lexeme;
+        // 同じ名前の変数が同じスコープ内で宣言されていないかチェック
+        for local in self.locals.iter().rev() {
+            if local.depth < self.scope_depth {
+                break;
+            }
+            if local.name == name {
+                tracing::error!("Variable with this name already declared in this scope.");
+                return Err(CompileError::InvalidSyntax);
+            }
+        }
+        self.locals.push(Local::new(name));
+        Ok(())
+    }
+
     fn named_variable(&mut self, name: String, can_assign: bool) -> Result<(), CompileError> {
-        let value = Value::Object(Object::String(name));
-        self.write_op_code(OpCode::Constant(value))?;
-        if can_assign && self.parser.match_token(TokenType::EQUAL)? {
-            self.expression()?;
-            self.write_op_code(OpCode::SetGlobal)
+        if let Some(index) = self.resolve_local(&name) {
+            if can_assign && self.parser.match_token(TokenType::EQUAL)? {
+                self.expression()?;
+                self.write_op_code(OpCode::SetLocal(index))
+            } else {
+                self.write_op_code(OpCode::GetLocal(index))
+            }
         } else {
-            self.write_op_code(OpCode::GetGlobal)
+            let value = Value::Object(Object::String(name));
+            self.write_op_code(OpCode::Constant(value))?;
+
+            if can_assign && self.parser.match_token(TokenType::EQUAL)? {
+                self.expression()?;
+                self.write_op_code(OpCode::SetGlobal)
+            } else {
+                self.write_op_code(OpCode::GetGlobal)
+            }
         }
     }
 
@@ -278,5 +364,32 @@ impl Compiler {
         self.codes
             .push_back((code, self.parser.previous_token()?.location));
         Ok(())
+    }
+
+    fn begin_scope(&mut self) {
+        self.scope_depth += 1;
+    }
+
+    fn end_scope(&mut self) -> Result<(), CompileError> {
+        self.scope_depth -= 1;
+        let mut local_cnt = self.locals.len();
+        while local_cnt > 0 && self.locals[local_cnt - 1].depth > self.scope_depth {
+            self.write_op_code(OpCode::Pop)?;
+            local_cnt -= 1;
+        }
+        Ok(())
+    }
+
+    fn resolve_local(&mut self, name: &str) -> Option<usize> {
+        for (i, local) in self.locals.iter().enumerate().rev() {
+            if local.name == name {
+                if local.depth == -1 {
+                    tracing::error!("Can't read local variable in its own initializer.");
+                    return None;
+                }
+                return Some(i);
+            }
+        }
+        None
     }
 }
