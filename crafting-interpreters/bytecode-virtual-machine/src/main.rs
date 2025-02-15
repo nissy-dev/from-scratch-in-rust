@@ -1,5 +1,6 @@
 use std::io::Write;
 
+mod code;
 mod compiler;
 mod lexer;
 mod parser;

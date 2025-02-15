@@ -1,5 +1,5 @@
 use crate::{
-    compiler::{OpCode, OpCodes},
+    code::{OpCode, OpCodes},
     table::Table,
     token::Location,
     value::{Object, Value},

@@ -1,5 +1,7 @@
 use std::{fmt, ops};
 
+use crate::code::OpCodes;
+
 #[derive(Debug, Clone, PartialOrd)]
 pub enum Value {
     Number(f64),
@@ -8,9 +10,32 @@ pub enum Value {
     Object(Object),
 }
 
+enum FunctionType {
+    Function,
+    script,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd)]
+pub struct Function {
+    arity: usize,
+    name: String,
+    codes: OpCodes,
+}
+
+impl Function {
+    pub fn new(name: &str) -> Self {
+        Function {
+            arity: 0,
+            name: name.to_owned(),
+            codes: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd)]
 pub enum Object {
     String(String),
+    Function(Function),
 }
 
 impl Value {
@@ -95,6 +120,7 @@ impl fmt::Display for Object {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Object::String(val) => write!(f, "{}", val),
+            Object::Function(val) => write!(f, "<fn {}>", val.name),
         }
     }
 }

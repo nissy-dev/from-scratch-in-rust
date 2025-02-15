@@ -1,39 +1,10 @@
 use crate::{
+    code::{OpCode, OpCodes},
     lexer::Scanner,
     parser::{ParseError, Parser},
-    token::{Location, Precedence, Token, TokenType},
+    token::{Precedence, Token, TokenType},
     value::{Object, Value},
 };
-
-#[derive(Debug, Clone)]
-pub enum OpCode {
-    Return,
-    Constant(Value),
-    Negate,
-    Add,
-    Subtract,
-    Multiply,
-    Divide,
-    Nil,
-    True,
-    False,
-    Not,
-    Equal,
-    Greater,
-    Less,
-    Print,
-    Pop,
-    DefineGlobal,
-    GetGlobal,
-    SetGlobal,
-    GetLocal(usize),
-    SetLocal(usize),
-    JumpIfFalse(usize),
-    Jump(usize),
-    Loop(usize),
-}
-
-pub type OpCodes = Vec<(OpCode, Location)>;
 
 #[derive(Debug)]
 pub enum CompileError {
@@ -427,9 +398,8 @@ impl Compiler {
 
     fn parse_precedence(&mut self, precedence: Precedence) -> Result<(), CompileError> {
         self.parser.advance()?;
-        // TODO: prefix expression がない場合は early return しているが、ここはそうなっていない
         let can_assign = precedence <= Precedence::Assignment;
-
+        // TODO: prefix expression がない場合は early return しているが、ここはそうなっていない
         self.parse_prefix_expr(self.parser.previous_token()?, can_assign)?;
         while precedence <= self.precedence(&self.parser.current_token()?) {
             self.parser.advance()?;
@@ -495,7 +465,6 @@ impl Compiler {
 
     fn named_variable(&mut self, name: String, can_assign: bool) -> Result<(), CompileError> {
         if let Some(index) = self.resolve_local(&name) {
-            println!("resolved index: {:?}", index);
             if can_assign && self.parser.match_token(TokenType::EQUAL)? {
                 self.expression()?;
                 self.write_op_code(OpCode::SetLocal(index))?;
@@ -530,6 +499,7 @@ impl Compiler {
     fn end_scope(&mut self) -> Result<(), CompileError> {
         self.scope_depth -= 1;
         while self.local_cnt > 0 && self.locals[self.local_cnt - 1].depth > self.scope_depth {
+            // TODO: locals からスコープ外の変数を削除しないとうまく動かなかったが正しいのか...?
             self.locals.pop();
             self.write_op_code(OpCode::Pop)?;
             self.local_cnt -= 1;

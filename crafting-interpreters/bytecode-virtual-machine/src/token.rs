@@ -64,7 +64,7 @@ pub enum Precedence {
     Primary,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd)]
 pub struct Location {
     pub line: usize,
     pub column: usize,
