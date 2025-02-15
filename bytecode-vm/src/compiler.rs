@@ -56,8 +56,8 @@ struct Local {
 }
 
 impl Local {
-    fn new(name: String) -> Self {
-        Local { name, depth: -1 }
+    fn new(name: String, depth: isize) -> Self {
+        Local { name, depth }
     }
 }
 
@@ -66,6 +66,7 @@ pub struct Compiler {
     parser: Parser,
     codes: OpCodes,
     locals: Vec<Local>,
+    local_cnt: usize,
     scope_depth: isize,
 }
 
@@ -75,6 +76,7 @@ impl Compiler {
             parser: Parser::new(Scanner::new(source)),
             codes: Vec::new(),
             locals: Vec::new(),
+            local_cnt: 0,
             scope_depth: 0,
         }
     }
@@ -109,7 +111,8 @@ impl Compiler {
             TokenType::SEMICOLON,
             "Expect ';' after variable declaration",
         )?;
-        self.define_variable()
+        self.define_variable()?;
+        Ok(())
     }
 
     fn statement(&mut self) -> Result<(), CompileError> {
@@ -146,9 +149,11 @@ impl Compiler {
             .consume(TokenType::RIGHT_PAREN, "Expect ')' after condition")?;
 
         let then_jump = self.write_op_code(OpCode::JumpIfFalse(0))?;
+        self.write_op_code(OpCode::Pop)?;
         self.statement()?;
         let else_jump = self.write_op_code(OpCode::Jump(0))?;
         self.patch_jump(then_jump)?;
+        self.write_op_code(OpCode::Pop)?;
 
         if self.parser.match_token(TokenType::ELSE)? {
             self.statement()?;
@@ -165,9 +170,12 @@ impl Compiler {
         self.expression()?;
         self.parser
             .consume(TokenType::RIGHT_PAREN, "Expect ')' after condition")?;
+
         let exit_jump = self.write_op_code(OpCode::JumpIfFalse(0))?;
+        self.write_op_code(OpCode::Pop)?;
         self.statement()?;
         self.emit_loop(loop_start)?;
+
         self.patch_jump(exit_jump)?;
         self.write_op_code(OpCode::Pop)?;
         Ok(())
@@ -195,6 +203,7 @@ impl Compiler {
             self.parser
                 .consume(TokenType::SEMICOLON, "Expect ';' after loop condition")?;
             exit_jump = Some(self.write_op_code(OpCode::JumpIfFalse(0))?);
+            self.write_op_code(OpCode::Pop)?;
         }
 
         // increment
@@ -202,7 +211,7 @@ impl Compiler {
             let body_jump = self.write_op_code(OpCode::Jump(0))?;
             let increment_start = self.codes.len();
             self.expression()?;
-            // self.write_op_code(OpCode::Pop)?;
+            self.write_op_code(OpCode::Pop)?;
             self.parser
                 .consume(TokenType::RIGHT_PAREN, "Expect ')' after for clauses")?;
 
@@ -215,6 +224,7 @@ impl Compiler {
         self.emit_loop(loop_start)?;
         if let Some(exit_jump) = exit_jump {
             self.patch_jump(exit_jump)?;
+            self.write_op_code(OpCode::Pop)?;
         }
         self.end_scope()?;
         Ok(())
@@ -365,6 +375,7 @@ impl Compiler {
         let else_jump = self.write_op_code(OpCode::JumpIfFalse(0))?;
         let end_jump = self.write_op_code(OpCode::Jump(0))?;
         self.patch_jump(else_jump)?;
+        self.write_op_code(OpCode::Pop)?;
         self.parse_precedence(Precedence::Or)?;
         self.patch_jump(end_jump)?;
         Ok(())
@@ -450,9 +461,7 @@ impl Compiler {
     fn define_variable(&mut self) -> Result<(), CompileError> {
         // local variable の処理
         if self.scope_depth > 0 {
-            if let Some(local) = self.locals.last_mut() {
-                (*local).depth = self.scope_depth;
-            }
+            self.mark_initialized();
             return Ok(());
         }
         // global variable の処理
@@ -469,8 +478,9 @@ impl Compiler {
         // local variable の処理
         let name = self.parser.previous_token()?.lexeme;
         // 同じ名前の変数が同じスコープ内で宣言されていないかチェック
-        for local in self.locals.iter().rev() {
-            if local.depth < self.scope_depth {
+        for i in (0..self.local_cnt).rev() {
+            let local = &self.locals[i];
+            if local.depth != -1 && local.depth < self.scope_depth {
                 break;
             }
             if local.name == name {
@@ -478,12 +488,14 @@ impl Compiler {
                 return Err(CompileError::InvalidSyntax);
             }
         }
-        self.locals.push(Local::new(name));
+
+        self.add_local(name);
         Ok(())
     }
 
     fn named_variable(&mut self, name: String, can_assign: bool) -> Result<(), CompileError> {
         if let Some(index) = self.resolve_local(&name) {
+            println!("resolved index: {:?}", index);
             if can_assign && self.parser.match_token(TokenType::EQUAL)? {
                 self.expression()?;
                 self.write_op_code(OpCode::SetLocal(index))?;
@@ -517,16 +529,22 @@ impl Compiler {
 
     fn end_scope(&mut self) -> Result<(), CompileError> {
         self.scope_depth -= 1;
-        let mut local_cnt = self.locals.len();
-        while local_cnt > 0 && self.locals[local_cnt - 1].depth > self.scope_depth {
+        while self.local_cnt > 0 && self.locals[self.local_cnt - 1].depth > self.scope_depth {
+            self.locals.pop();
             self.write_op_code(OpCode::Pop)?;
-            local_cnt -= 1;
+            self.local_cnt -= 1;
         }
         Ok(())
     }
 
+    fn add_local(&mut self, name: String) {
+        self.locals.push(Local::new(name, -1));
+        self.local_cnt += 1;
+    }
+
     fn resolve_local(&mut self, name: &str) -> Option<usize> {
-        for (i, local) in self.locals.iter().enumerate().rev() {
+        for i in (0..self.local_cnt).rev() {
+            let local = &self.locals[i];
             if local.name == name {
                 if local.depth == -1 {
                     tracing::error!("Can't read local variable in its own initializer.");
@@ -536,6 +554,10 @@ impl Compiler {
             }
         }
         None
+    }
+
+    fn mark_initialized(&mut self) {
+        self.locals[self.local_cnt - 1].depth = self.scope_depth;
     }
 
     fn patch_jump(&mut self, offset: usize) -> Result<(), CompileError> {
