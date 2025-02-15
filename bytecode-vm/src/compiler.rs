@@ -1,5 +1,3 @@
-use std::collections::VecDeque;
-
 use crate::{
     lexer::Scanner,
     parser::{ParseError, Parser},
@@ -30,13 +28,17 @@ pub enum OpCode {
     SetGlobal,
     GetLocal(usize),
     SetLocal(usize),
+    JumpIfFalse(usize),
+    Jump(usize),
+    Loop(usize),
 }
 
-pub type OpCodes = VecDeque<(OpCode, Location)>;
+pub type OpCodes = Vec<(OpCode, Location)>;
 
 #[derive(Debug)]
 pub enum CompileError {
     InvalidSyntax,
+    InvalidJumpOperation,
     InvalidOperator,
     ParseError(ParseError),
 }
@@ -71,7 +73,7 @@ impl Compiler {
     pub fn new(source: String) -> Self {
         Compiler {
             parser: Parser::new(Scanner::new(source)),
-            codes: VecDeque::new(),
+            codes: Vec::new(),
             locals: Vec::new(),
             scope_depth: 0,
         }
@@ -113,6 +115,12 @@ impl Compiler {
     fn statement(&mut self) -> Result<(), CompileError> {
         if self.parser.match_token(TokenType::PRINT)? {
             self.print_statement()
+        } else if self.parser.match_token(TokenType::IF)? {
+            self.if_statement()
+        } else if self.parser.match_token(TokenType::WHILE)? {
+            self.while_statement()
+        } else if self.parser.match_token(TokenType::FOR)? {
+            self.for_statement()
         } else if self.parser.match_token(TokenType::LEFT_BRACE)? {
             self.begin_scope();
             self.block()?;
@@ -126,7 +134,90 @@ impl Compiler {
         self.expression()?;
         self.parser
             .consume(TokenType::SEMICOLON, "Expect ';' after value")?;
-        self.write_op_code(OpCode::Print)
+        self.write_op_code(OpCode::Print)?;
+        Ok(())
+    }
+
+    fn if_statement(&mut self) -> Result<(), CompileError> {
+        self.parser
+            .consume(TokenType::LEFT_PAREN, "Expect '(' after 'if'")?;
+        self.expression()?;
+        self.parser
+            .consume(TokenType::RIGHT_PAREN, "Expect ')' after condition")?;
+
+        let then_jump = self.write_op_code(OpCode::JumpIfFalse(0))?;
+        self.statement()?;
+        let else_jump = self.write_op_code(OpCode::Jump(0))?;
+        self.patch_jump(then_jump)?;
+
+        if self.parser.match_token(TokenType::ELSE)? {
+            self.statement()?;
+        }
+        self.patch_jump(else_jump)?;
+
+        Ok(())
+    }
+
+    fn while_statement(&mut self) -> Result<(), CompileError> {
+        let loop_start = self.codes.len();
+        self.parser
+            .consume(TokenType::LEFT_PAREN, "Expect '(' after 'while'")?;
+        self.expression()?;
+        self.parser
+            .consume(TokenType::RIGHT_PAREN, "Expect ')' after condition")?;
+        let exit_jump = self.write_op_code(OpCode::JumpIfFalse(0))?;
+        self.statement()?;
+        self.emit_loop(loop_start)?;
+        self.patch_jump(exit_jump)?;
+        self.write_op_code(OpCode::Pop)?;
+        Ok(())
+    }
+
+    fn for_statement(&mut self) -> Result<(), CompileError> {
+        self.begin_scope();
+        self.parser
+            .consume(TokenType::LEFT_PAREN, "Expect '(' after 'for'")?;
+
+        // initializer
+        if self.parser.match_token(TokenType::SEMICOLON)? {
+            // No initializer
+        } else if self.parser.match_token(TokenType::VAR)? {
+            self.var_declaration()?;
+        } else {
+            self.expression_statement()?;
+        }
+
+        // condition
+        let mut loop_start = self.codes.len();
+        let mut exit_jump = None;
+        if !self.parser.match_token(TokenType::SEMICOLON)? {
+            self.expression()?;
+            self.parser
+                .consume(TokenType::SEMICOLON, "Expect ';' after loop condition")?;
+            exit_jump = Some(self.write_op_code(OpCode::JumpIfFalse(0))?);
+        }
+
+        // increment
+        if !self.parser.match_token(TokenType::RIGHT_PAREN)? {
+            let body_jump = self.write_op_code(OpCode::Jump(0))?;
+            let increment_start = self.codes.len();
+            self.expression()?;
+            // self.write_op_code(OpCode::Pop)?;
+            self.parser
+                .consume(TokenType::RIGHT_PAREN, "Expect ')' after for clauses")?;
+
+            self.emit_loop(loop_start)?;
+            loop_start = increment_start;
+            self.patch_jump(body_jump)?;
+        }
+
+        self.statement()?;
+        self.emit_loop(loop_start)?;
+        if let Some(exit_jump) = exit_jump {
+            self.patch_jump(exit_jump)?;
+        }
+        self.end_scope()?;
+        Ok(())
     }
 
     fn block(&mut self) -> Result<(), CompileError> {
@@ -144,7 +235,8 @@ impl Compiler {
         self.expression()?;
         self.parser
             .consume(TokenType::SEMICOLON, "Expect ';' after expression")?;
-        self.write_op_code(OpCode::Pop)
+        self.write_op_code(OpCode::Pop)?;
+        Ok(())
     }
 
     fn expression(&mut self) -> Result<(), CompileError> {
@@ -153,12 +245,14 @@ impl Compiler {
 
     fn number(&mut self, value: f64) -> Result<(), CompileError> {
         let value = Value::Number(value);
-        self.write_op_code(OpCode::Constant(value))
+        self.write_op_code(OpCode::Constant(value))?;
+        Ok(())
     }
 
     fn string(&mut self, value: String) -> Result<(), CompileError> {
         let object = Object::String(value);
-        self.write_op_code(OpCode::Constant(Value::Object(object)))
+        self.write_op_code(OpCode::Constant(Value::Object(object)))?;
+        Ok(())
     }
 
     fn grouping(&mut self) -> Result<(), CompileError> {
@@ -172,13 +266,19 @@ impl Compiler {
         let token = self.parser.previous_token()?;
         self.parse_precedence(Precedence::Unary)?;
         match token.r#type {
-            TokenType::MINUS => self.write_op_code(OpCode::Negate),
-            TokenType::BANG => self.write_op_code(OpCode::Not),
+            TokenType::MINUS => {
+                self.write_op_code(OpCode::Negate)?;
+            }
+            TokenType::BANG => {
+                self.write_op_code(OpCode::Not)?;
+            }
             _ => {
                 tracing::error!("Invalid operator: {:?}", token.r#type);
-                Err(CompileError::InvalidOperator)
+                return Err(CompileError::InvalidOperator);
             }
         }
+
+        Ok(())
     }
 
     fn binary(&mut self) -> Result<(), CompileError> {
@@ -186,48 +286,88 @@ impl Compiler {
         self.parse_precedence(token.precedence().next())?;
 
         match token.r#type {
-            TokenType::MINUS => self.write_op_code(OpCode::Subtract),
-            TokenType::PLUS => self.write_op_code(OpCode::Add),
-            TokenType::STAR => self.write_op_code(OpCode::Multiply),
-            TokenType::SLASH => self.write_op_code(OpCode::Divide),
+            TokenType::MINUS => {
+                self.write_op_code(OpCode::Subtract)?;
+            }
+            TokenType::PLUS => {
+                self.write_op_code(OpCode::Add)?;
+            }
+            TokenType::STAR => {
+                self.write_op_code(OpCode::Multiply)?;
+            }
+            TokenType::SLASH => {
+                self.write_op_code(OpCode::Divide)?;
+            }
             TokenType::BANG_EQUAL => {
                 self.write_op_code(OpCode::Equal)?;
-                self.write_op_code(OpCode::Not)
+                self.write_op_code(OpCode::Not)?;
             }
-            TokenType::EQUAL_EQUAL => self.write_op_code(OpCode::Equal),
-            TokenType::GREATER => self.write_op_code(OpCode::Greater),
+            TokenType::EQUAL_EQUAL => {
+                self.write_op_code(OpCode::Equal)?;
+            }
+            TokenType::GREATER => {
+                self.write_op_code(OpCode::Greater)?;
+            }
             TokenType::GREATER_EQUAL => {
                 self.write_op_code(OpCode::Less)?;
-                self.write_op_code(OpCode::Not)
+                self.write_op_code(OpCode::Not)?;
             }
-            TokenType::LESS => self.write_op_code(OpCode::Less),
+            TokenType::LESS => {
+                self.write_op_code(OpCode::Less)?;
+            }
             TokenType::LESS_EQUAL => {
                 self.write_op_code(OpCode::Greater)?;
-                self.write_op_code(OpCode::Not)
+                self.write_op_code(OpCode::Not)?;
             }
             _ => {
                 tracing::error!("Invalid binary operator: {:?}", token.r#type);
-                Err(CompileError::InvalidOperator)
+                return Err(CompileError::InvalidOperator);
             }
         }
+
+        Ok(())
     }
 
     fn literal(&mut self) -> Result<(), CompileError> {
         let token = self.parser.previous_token()?;
         match token.r#type {
-            TokenType::FALSE => self.write_op_code(OpCode::False),
-            TokenType::NIL => self.write_op_code(OpCode::Nil),
-            TokenType::TRUE => self.write_op_code(OpCode::True),
+            TokenType::FALSE => {
+                self.write_op_code(OpCode::False)?;
+            }
+            TokenType::NIL => {
+                self.write_op_code(OpCode::Nil)?;
+            }
+            TokenType::TRUE => {
+                self.write_op_code(OpCode::True)?;
+            }
             _ => {
                 tracing::error!("Invalid literal: {:?}", token.r#type);
                 return Err(CompileError::InvalidOperator);
             }
         }
+
+        Ok(())
     }
 
     fn variable(&mut self, can_assign: bool) -> Result<(), CompileError> {
         let token = self.parser.previous_token()?;
         self.named_variable(token.lexeme, can_assign)
+    }
+
+    fn and(&mut self) -> Result<(), CompileError> {
+        let end_jump = self.write_op_code(OpCode::JumpIfFalse(0))?;
+        self.parse_precedence(Precedence::And)?;
+        self.patch_jump(end_jump)?;
+        Ok(())
+    }
+
+    fn or(&mut self) -> Result<(), CompileError> {
+        let else_jump = self.write_op_code(OpCode::JumpIfFalse(0))?;
+        let end_jump = self.write_op_code(OpCode::Jump(0))?;
+        self.patch_jump(else_jump)?;
+        self.parse_precedence(Precedence::Or)?;
+        self.patch_jump(end_jump)?;
+        Ok(())
     }
 
     fn parse_prefix_expr(&mut self, token: Token, can_assign: bool) -> Result<(), CompileError> {
@@ -253,6 +393,8 @@ impl Compiler {
             | TokenType::GREATER_EQUAL
             | TokenType::LESS
             | TokenType::LESS_EQUAL => self.binary(),
+            TokenType::AND => self.and(),
+            TokenType::OR => self.or(),
             _ => Ok(()),
         }
     }
@@ -266,6 +408,8 @@ impl Compiler {
             | TokenType::GREATER_EQUAL
             | TokenType::LESS
             | TokenType::LESS_EQUAL => Precedence::Comparison,
+            TokenType::AND => Precedence::And,
+            TokenType::OR => Precedence::Or,
             _ => Precedence::None,
         }
     }
@@ -292,16 +436,15 @@ impl Compiler {
     fn parse_variable(&mut self, error_msg: &str) -> Result<(), CompileError> {
         self.parser.consume(TokenType::IDENTIFIER, error_msg)?;
         self.declare_variable()?;
-
         // local variable の処理
         if self.scope_depth > 0 {
             return Ok(());
         }
-
         // global variable の処理
         let token = self.parser.previous_token()?;
         let value = Value::Object(Object::String(token.lexeme));
-        self.write_op_code(OpCode::Constant(value))
+        self.write_op_code(OpCode::Constant(value))?;
+        Ok(())
     }
 
     fn define_variable(&mut self) -> Result<(), CompileError> {
@@ -312,9 +455,9 @@ impl Compiler {
             }
             return Ok(());
         }
-
         // global variable の処理
-        self.write_op_code(OpCode::DefineGlobal)
+        self.write_op_code(OpCode::DefineGlobal)?;
+        Ok(())
     }
 
     fn declare_variable(&mut self) -> Result<(), CompileError> {
@@ -343,9 +486,9 @@ impl Compiler {
         if let Some(index) = self.resolve_local(&name) {
             if can_assign && self.parser.match_token(TokenType::EQUAL)? {
                 self.expression()?;
-                self.write_op_code(OpCode::SetLocal(index))
+                self.write_op_code(OpCode::SetLocal(index))?;
             } else {
-                self.write_op_code(OpCode::GetLocal(index))
+                self.write_op_code(OpCode::GetLocal(index))?;
             }
         } else {
             let value = Value::Object(Object::String(name));
@@ -353,17 +496,19 @@ impl Compiler {
 
             if can_assign && self.parser.match_token(TokenType::EQUAL)? {
                 self.expression()?;
-                self.write_op_code(OpCode::SetGlobal)
+                self.write_op_code(OpCode::SetGlobal)?;
             } else {
-                self.write_op_code(OpCode::GetGlobal)
+                self.write_op_code(OpCode::GetGlobal)?;
             }
         }
+
+        Ok(())
     }
 
-    fn write_op_code(&mut self, code: OpCode) -> Result<(), CompileError> {
+    fn write_op_code(&mut self, code: OpCode) -> Result<usize, CompileError> {
         self.codes
-            .push_back((code, self.parser.previous_token()?.location));
-        Ok(())
+            .push((code, self.parser.previous_token()?.location));
+        Ok(self.codes.len() - 1)
     }
 
     fn begin_scope(&mut self) {
@@ -391,5 +536,29 @@ impl Compiler {
             }
         }
         None
+    }
+
+    fn patch_jump(&mut self, offset: usize) -> Result<(), CompileError> {
+        let jump = self.codes.len() - offset - 1;
+        match self.codes.get(offset) {
+            Some((OpCode::JumpIfFalse(_), loc)) => {
+                self.codes[offset] = (OpCode::JumpIfFalse(jump), loc.clone());
+            }
+            Some((OpCode::Jump(_), loc)) => {
+                self.codes[offset] = (OpCode::Jump(jump), loc.clone());
+            }
+            _ => {
+                tracing::error!("Invalid jump operand");
+                return Err(CompileError::InvalidJumpOperation);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn emit_loop(&mut self, loop_start: usize) -> Result<(), CompileError> {
+        let offset = self.codes.len() - loop_start + 1;
+        self.write_op_code(OpCode::Loop(offset))?;
+        Ok(())
     }
 }

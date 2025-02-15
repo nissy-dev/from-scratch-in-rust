@@ -1,7 +1,6 @@
 var beverage = "cafe au lait";
 var breakfast = "beignets with " + beverage;
 print breakfast;
-
 var breakfast = "beignets";
 var beverage = "cafe au lait";
 breakfast = "beignets with " + beverage;
@@ -18,3 +17,24 @@ print breakfast;
     }
   }
 }
+
+if (false or true) {
+  print "true";
+}
+if (false and true) {
+  print "true";
+} else {
+  print "false";
+}
+
+for (var j = 0; j < 2; j = j + 1) {
+  print "for loop";
+}
+
+var i = 0;
+while (i < 2) {
+  print "while loop";
+  i = i + 1;
+}
+
+print "finish";

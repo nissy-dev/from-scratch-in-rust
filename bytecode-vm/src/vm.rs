@@ -21,6 +21,7 @@ pub enum InterpretError {
 #[derive(Debug)]
 pub struct VirtualMachine {
     codes: OpCodes,
+    cursor: usize,
     stack: Vec<Value>,
     globals: Table,
     // pub object_list: Option<Rc<RefCell<ObjectNode>>>,
@@ -30,6 +31,7 @@ impl VirtualMachine {
     pub fn new(codes: OpCodes) -> Self {
         VirtualMachine {
             codes,
+            cursor: 0,
             stack: Vec::with_capacity(STACK_MAX),
             globals: Table::new(30),
             // object_list: None,
@@ -37,10 +39,11 @@ impl VirtualMachine {
     }
 
     pub fn interpret(&mut self) -> Result<(), InterpretError> {
-        while let Some((instruction, loc)) = self.codes.pop_front() {
+        while let Some((instruction, loc)) = self.codes.get(self.cursor).cloned() {
+            self.cursor += 1;
             match instruction {
                 OpCode::Return => self.return_op(&loc)?,
-                OpCode::Constant(value) => self.stack_push(value),
+                OpCode::Constant(value) => self.stack_push(value.clone()),
                 OpCode::Nil => self.stack_push(Value::Nil),
                 OpCode::True => self.stack_push(Value::Boolean(true)),
                 OpCode::False => self.stack_push(Value::Boolean(false)),
@@ -60,6 +63,9 @@ impl VirtualMachine {
                 OpCode::SetGlobal => self.set_global_op(&loc)?,
                 OpCode::GetLocal(slot) => self.get_local_op(slot, &loc)?,
                 OpCode::SetLocal(slot) => self.set_local_op(slot, &loc)?,
+                OpCode::JumpIfFalse(jump_offset) => self.jump_if_false_op(jump_offset, &loc)?,
+                OpCode::Jump(jump_offset) => self.jump_op(jump_offset, &loc)?,
+                OpCode::Loop(loop_offset) => self.loop_op(loop_offset, &loc)?,
             }
         }
 
@@ -177,6 +183,31 @@ impl VirtualMachine {
             }
             _ => self.report_error(loc, "No valid values to set"),
         }
+    }
+
+    fn jump_if_false_op(
+        &mut self,
+        jump_offset: usize,
+        loc: &Location,
+    ) -> Result<(), InterpretError> {
+        if let Some(value) = self.stack.last() {
+            if value.is_falsy() {
+                self.cursor += jump_offset;
+            }
+            Ok(())
+        } else {
+            self.report_error(loc, "No value to if else condition")
+        }
+    }
+
+    fn jump_op(&mut self, jump_offset: usize, _loc: &Location) -> Result<(), InterpretError> {
+        self.cursor += jump_offset;
+        Ok(())
+    }
+
+    fn loop_op(&mut self, loop_offset: usize, _loc: &Location) -> Result<(), InterpretError> {
+        self.cursor -= loop_offset;
+        Ok(())
     }
 
     fn stack_push(&mut self, value: Value) {
