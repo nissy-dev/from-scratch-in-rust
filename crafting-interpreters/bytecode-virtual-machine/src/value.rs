@@ -18,8 +18,8 @@ pub enum FunctionType {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd)]
 pub struct Function {
-    arity: usize,
-    name: String,
+    pub arity: usize,
+    pub name: String,
     pub codes: OpCodes,
 }
 

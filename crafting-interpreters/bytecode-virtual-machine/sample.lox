@@ -37,4 +37,8 @@ while (i < 2) {
   i = i + 1;
 }
 
-print "finish";
+fun test() {
+  print "function";
+}
+
+test();

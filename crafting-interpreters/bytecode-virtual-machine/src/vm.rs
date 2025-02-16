@@ -11,12 +11,12 @@ const STACK_MAX: usize = 256;
 #[derive(Debug)]
 pub enum InterpretError {
     RuntimeError,
-    CompileError(CompileError),
+    CompileError(()),
 }
 
 impl From<CompileError> for InterpretError {
-    fn from(error: CompileError) -> Self {
-        InterpretError::CompileError(error)
+    fn from(_: CompileError) -> Self {
+        InterpretError::CompileError(())
     }
 }
 
@@ -73,10 +73,8 @@ impl VirtualMachine {
         if let Some(mut frame) = self.frames.pop() {
             while frame.ip < frame.function.codes.len() {
                 let (instruction, loc) = frame.function.codes[frame.ip].clone();
-                // println!("instruction: {:?}", instruction);
                 self.execute_operation(instruction, &mut frame, &loc)?;
                 frame.ip += 1;
-                // println!("stack: {:?}", frame.slots);
             }
             return Ok(());
         }
@@ -91,7 +89,7 @@ impl VirtualMachine {
         loc: &Location,
     ) -> Result<(), InterpretError> {
         match instruction {
-            OpCode::Return => self.return_op(loc)?,
+            OpCode::Return => self.return_op(frame, loc)?,
             OpCode::Constant(value) => self.stack_push(frame, value.clone()),
             OpCode::Nil => self.stack_push(frame, Value::Nil),
             OpCode::True => self.stack_push(frame, Value::Boolean(true)),
@@ -115,13 +113,20 @@ impl VirtualMachine {
             OpCode::JumpIfFalse(jump_offset) => self.jump_if_false_op(frame, jump_offset, loc)?,
             OpCode::Jump(jump_offset) => self.jump_op(frame, jump_offset)?,
             OpCode::Loop(loop_offset) => self.loop_op(frame, loop_offset)?,
+            OpCode::Call(arg_count) => self.call_op(frame, arg_count, loc)?,
         }
 
         Ok(())
     }
 
-    fn return_op(&self, _loc: &Location) -> Result<(), InterpretError> {
-        Ok(())
+    fn return_op(&mut self, frame: &mut CallFrame, loc: &Location) -> Result<(), InterpretError> {
+        if let Some(value) = frame.slots.pop() {
+            self.frames.pop();
+            self.stack_push(frame, value);
+            Ok(())
+        } else {
+            self.report_error(loc, "No value to return")
+        }
     }
 
     fn negate_op(&self, frame: &mut CallFrame, loc: &Location) -> Result<(), InterpretError> {
@@ -280,6 +285,25 @@ impl VirtualMachine {
     fn loop_op(&mut self, frame: &mut CallFrame, loop_offset: usize) -> Result<(), InterpretError> {
         frame.ip -= loop_offset;
         Ok(())
+    }
+
+    fn call_op(
+        &mut self,
+        frame: &mut CallFrame,
+        arg_count: usize,
+        loc: &Location,
+    ) -> Result<(), InterpretError> {
+        if let Some(Value::Object(Object::Function(function))) = frame.slots.get(arg_count) {
+            if function.arity != arg_count {
+                return self.report_error(loc, "Incorrect number of arguments");
+            }
+            self.frames
+                .push(CallFrame::new(function.clone(), frame.slots.clone()));
+            self.run()?;
+            Ok(())
+        } else {
+            self.report_error(loc, "Can only call functions")
+        }
     }
 
     fn stack_push(&self, frame: &mut CallFrame, value: Value) {

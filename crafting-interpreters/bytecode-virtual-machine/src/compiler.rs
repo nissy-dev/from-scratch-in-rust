@@ -1,3 +1,5 @@
+use std::{cell::RefCell, rc::Rc};
+
 use crate::{
     code::OpCode,
     lexer::Scanner,
@@ -33,25 +35,50 @@ impl Local {
 }
 
 #[derive(Debug)]
-pub struct Compiler {
-    parser: Parser,
+struct CompilerEnv {
     function: Function,
     function_type: FunctionType,
     locals: Vec<Local>,
     local_cnt: usize,
     scope_depth: isize,
+    enclosing: Option<Rc<RefCell<CompilerEnv>>>,
+}
+
+impl CompilerEnv {
+    fn new(enclosing: Option<Rc<RefCell<CompilerEnv>>>) -> Self {
+        CompilerEnv {
+            function: Function::new(""),
+            function_type: FunctionType::Script,
+            locals: Vec::new(),
+            local_cnt: 0,
+            scope_depth: 0,
+            enclosing,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Compiler {
+    parser: Parser,
+    env: Rc<RefCell<CompilerEnv>>,
 }
 
 impl Compiler {
     pub fn new(source: String) -> Self {
         Compiler {
             parser: Parser::new(Scanner::new(source)),
-            function: Function::new(""),
-            function_type: FunctionType::Script,
-            locals: Vec::new(),
-            local_cnt: 0,
-            scope_depth: 0,
+            env: Rc::new(RefCell::new(CompilerEnv::new(None))),
         }
+    }
+
+    fn stack_new_compiler(&mut self, function_type: FunctionType) -> Result<(), CompileError> {
+        self.env.borrow_mut().function_type = function_type.clone();
+        self.env = Rc::new(RefCell::new(CompilerEnv::new(Some(self.env.clone()))));
+        if function_type != FunctionType::Script {
+            let name = self.parser.previous_token()?.lexeme;
+            self.env.borrow_mut().function.name = name;
+        }
+        Ok(())
     }
 
     pub fn compile(&mut self) -> Result<Function, CompileError> {
@@ -61,16 +88,66 @@ impl Compiler {
         }
         self.parser
             .consume(TokenType::EOF, "Expect end of expression")?;
-        self.write_op_code(OpCode::Return)?;
-        Ok(self.function.clone())
+        self.end_compiler()
+    }
+
+    fn end_compiler(&mut self) -> Result<Function, CompileError> {
+        let return_function = self.env.borrow().function.clone();
+        let enclosing_env = self.env.borrow().enclosing.clone();
+        if enclosing_env.is_some() {
+            self.env = enclosing_env.unwrap();
+        }
+        Ok(return_function)
     }
 
     fn declaration(&mut self) -> Result<(), CompileError> {
-        if self.parser.match_token(TokenType::VAR)? {
+        if self.parser.match_token(TokenType::FUN)? {
+            self.function_declaration()
+        } else if self.parser.match_token(TokenType::VAR)? {
             self.var_declaration()
         } else {
             self.statement()
         }
+    }
+
+    fn function_declaration(&mut self) -> Result<(), CompileError> {
+        self.parse_variable("Expect function name")?;
+        self.mark_initialized();
+        self.function(FunctionType::Function)?;
+        self.define_variable()?;
+        Ok(())
+    }
+
+    fn function(&mut self, function_type: FunctionType) -> Result<(), CompileError> {
+        self.stack_new_compiler(function_type)?;
+        self.begin_scope();
+        self.parser
+            .consume(TokenType::LEFT_PAREN, "Expect '(' after function name")?;
+
+        if !self.parser.check_token(TokenType::RIGHT_PAREN) {
+            loop {
+                self.env.borrow_mut().function.arity += 1;
+                if self.env.borrow().function.arity > 255 {
+                    tracing::error!("Can't have more than 255 parameters.");
+                    return Err(CompileError::InvalidSyntax);
+                }
+                self.parse_variable("Expect parameter name")?;
+                self.define_variable()?;
+                if !self.parser.match_token(TokenType::COMMA)? {
+                    break;
+                }
+            }
+        }
+        self.parser
+            .consume(TokenType::RIGHT_PAREN, "Expect ')' after parameters")?;
+        self.parser
+            .consume(TokenType::LEFT_BRACE, "Expect '{' before function body")?;
+        self.block()?;
+
+        let function = self.end_compiler()?;
+        self.write_op_code(OpCode::Constant(Value::Object(Object::Function(function))))?;
+
+        Ok(())
     }
 
     fn var_declaration(&mut self) -> Result<(), CompileError> {
@@ -137,7 +214,7 @@ impl Compiler {
     }
 
     fn while_statement(&mut self) -> Result<(), CompileError> {
-        let loop_start = self.function.codes.len();
+        let loop_start = self.env.borrow().function.codes.len();
         self.parser
             .consume(TokenType::LEFT_PAREN, "Expect '(' after 'while'")?;
         self.expression()?;
@@ -169,7 +246,7 @@ impl Compiler {
         }
 
         // condition
-        let mut loop_start = self.function.codes.len();
+        let mut loop_start = self.env.borrow().function.codes.len();
         let mut exit_jump = None;
         if !self.parser.match_token(TokenType::SEMICOLON)? {
             self.expression()?;
@@ -182,7 +259,7 @@ impl Compiler {
         // increment
         if !self.parser.match_token(TokenType::RIGHT_PAREN)? {
             let body_jump = self.write_op_code(OpCode::Jump(0))?;
-            let increment_start = self.function.codes.len();
+            let increment_start = self.env.borrow().function.codes.len();
             self.expression()?;
             self.write_op_code(OpCode::Pop)?;
             self.parser
@@ -354,6 +431,28 @@ impl Compiler {
         Ok(())
     }
 
+    fn call(&mut self) -> Result<(), CompileError> {
+        let arg_count = self.argument_list()?;
+        self.write_op_code(OpCode::Call(arg_count))?;
+        Ok(())
+    }
+
+    fn argument_list(&mut self) -> Result<usize, CompileError> {
+        let mut arg_count = 0;
+        if !self.parser.check_token(TokenType::RIGHT_PAREN) {
+            loop {
+                self.expression()?;
+                arg_count += 1;
+                if !self.parser.match_token(TokenType::COMMA)? {
+                    break;
+                }
+            }
+        }
+        self.parser
+            .consume(TokenType::RIGHT_PAREN, "Expect ')' after arguments")?;
+        Ok(arg_count)
+    }
+
     fn parse_prefix_expr(&mut self, token: Token, can_assign: bool) -> Result<(), CompileError> {
         match token.r#type {
             TokenType::NUMBER(value) => self.number(value),
@@ -379,6 +478,7 @@ impl Compiler {
             | TokenType::LESS_EQUAL => self.binary(),
             TokenType::AND => self.and(),
             TokenType::OR => self.or(),
+            TokenType::LEFT_PAREN => self.call(),
             _ => Ok(()),
         }
     }
@@ -394,6 +494,7 @@ impl Compiler {
             | TokenType::LESS_EQUAL => Precedence::Comparison,
             TokenType::AND => Precedence::And,
             TokenType::OR => Precedence::Or,
+            TokenType::LEFT_PAREN => Precedence::Call,
             _ => Precedence::None,
         }
     }
@@ -420,7 +521,7 @@ impl Compiler {
         self.parser.consume(TokenType::IDENTIFIER, error_msg)?;
         self.declare_variable()?;
         // local variable の処理
-        if self.scope_depth > 0 {
+        if self.env.borrow().scope_depth > 0 {
             return Ok(());
         }
         // global variable の処理
@@ -432,7 +533,7 @@ impl Compiler {
 
     fn define_variable(&mut self) -> Result<(), CompileError> {
         // local variable の処理
-        if self.scope_depth > 0 {
+        if self.env.borrow().scope_depth > 0 {
             self.mark_initialized();
             return Ok(());
         }
@@ -443,16 +544,16 @@ impl Compiler {
 
     fn declare_variable(&mut self) -> Result<(), CompileError> {
         // global variable の処理
-        if self.scope_depth == 0 {
+        if self.env.borrow().scope_depth == 0 {
             return Ok(());
         }
 
         // local variable の処理
         let name = self.parser.previous_token()?.lexeme;
         // 同じ名前の変数が同じスコープ内で宣言されていないかチェック
-        for i in (0..self.local_cnt).rev() {
-            let local = &self.locals[i];
-            if local.depth != -1 && local.depth < self.scope_depth {
+        for i in (0..self.env.borrow().local_cnt).rev() {
+            let local = &self.env.borrow().locals[i];
+            if local.depth != -1 && local.depth < self.env.borrow().scope_depth {
                 break;
             }
             if local.name == name {
@@ -489,35 +590,40 @@ impl Compiler {
     }
 
     fn write_op_code(&mut self, code: OpCode) -> Result<usize, CompileError> {
-        self.function
+        self.env
+            .borrow_mut()
+            .function
             .codes
             .push((code, self.parser.previous_token()?.location));
-        Ok(self.function.codes.len() - 1)
+        Ok(self.env.borrow().function.codes.len() - 1)
     }
 
     fn begin_scope(&mut self) {
-        self.scope_depth += 1;
+        self.env.borrow_mut().scope_depth += 1;
     }
 
     fn end_scope(&mut self) -> Result<(), CompileError> {
-        self.scope_depth -= 1;
-        while self.local_cnt > 0 && self.locals[self.local_cnt - 1].depth > self.scope_depth {
+        self.env.borrow_mut().scope_depth -= 1;
+        while self.env.borrow().local_cnt > 0
+            && self.env.borrow().locals[self.env.borrow().local_cnt - 1].depth
+                > self.env.borrow().scope_depth
+        {
             // TODO: locals からスコープ外の変数を削除しないとうまく動かなかったが正しいのか...?
-            self.locals.pop();
+            self.env.borrow_mut().locals.pop();
             self.write_op_code(OpCode::Pop)?;
-            self.local_cnt -= 1;
+            self.env.borrow_mut().local_cnt -= 1;
         }
         Ok(())
     }
 
     fn add_local(&mut self, name: String) {
-        self.locals.push(Local::new(name, -1));
-        self.local_cnt += 1;
+        self.env.borrow_mut().locals.push(Local::new(name, -1));
+        self.env.borrow_mut().local_cnt += 1;
     }
 
     fn resolve_local(&mut self, name: &str) -> Option<usize> {
-        for i in (0..self.local_cnt).rev() {
-            let local = &self.locals[i];
+        for i in (0..self.env.borrow().local_cnt).rev() {
+            let local = &self.env.borrow().locals[i];
             if local.name == name {
                 if local.depth == -1 {
                     tracing::error!("Can't read local variable in its own initializer.");
@@ -530,17 +636,28 @@ impl Compiler {
     }
 
     fn mark_initialized(&mut self) {
-        self.locals[self.local_cnt - 1].depth = self.scope_depth;
+        let (index, scope_depth) = {
+            let borrow_env = self.env.borrow();
+            if borrow_env.local_cnt == 0 {
+                return;
+            }
+            (borrow_env.local_cnt - 1, borrow_env.scope_depth)
+        };
+        self.env.borrow_mut().locals[index].depth = scope_depth;
     }
 
     fn patch_jump(&mut self, offset: usize) -> Result<(), CompileError> {
-        let jump = self.function.codes.len() - offset - 1;
-        match self.function.codes.get(offset) {
+        let jump = {
+            let borrow_env = self.env.borrow();
+            borrow_env.function.codes.len() - offset - 1
+        };
+        let mut borrow_env = self.env.borrow_mut();
+        match borrow_env.function.codes.get(offset) {
             Some((OpCode::JumpIfFalse(_), loc)) => {
-                self.function.codes[offset] = (OpCode::JumpIfFalse(jump), loc.clone());
+                borrow_env.function.codes[offset] = (OpCode::JumpIfFalse(jump), loc.clone());
             }
             Some((OpCode::Jump(_), loc)) => {
-                self.function.codes[offset] = (OpCode::Jump(jump), loc.clone());
+                borrow_env.function.codes[offset] = (OpCode::Jump(jump), loc.clone());
             }
             _ => {
                 tracing::error!("Invalid jump operand");
@@ -552,7 +669,7 @@ impl Compiler {
     }
 
     fn emit_loop(&mut self, loop_start: usize) -> Result<(), CompileError> {
-        let offset = self.function.codes.len() - loop_start + 1;
+        let offset = self.env.borrow().function.codes.len() - loop_start + 1;
         self.write_op_code(OpCode::Loop(offset))?;
         Ok(())
     }
