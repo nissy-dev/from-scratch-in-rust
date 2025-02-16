@@ -28,4 +28,27 @@ pub enum OpCode {
     Loop(usize),
 }
 
+// struct Chunk {
+//     codes: Vec<(OpCode, Location)>,
+//     constants: Vec<Value>,
+// }
+
+// impl Chunk {
+//     fn new() -> Self {
+//         Chunk {
+//             codes: Vec::new(),
+//             constants: Vec::new(),
+//         }
+//     }
+
+//     fn write(&mut self, code: OpCode, location: Location) {
+//         self.codes.push((code, location));
+//     }
+
+//     fn add_constant(&mut self, value: Value) -> usize {
+//         self.constants.push(value);
+//         self.constants.len() - 1
+//     }
+// }
+
 pub type OpCodes = Vec<(OpCode, Location)>;

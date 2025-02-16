@@ -32,18 +32,10 @@ fn main() {
 }
 
 fn run(source: String) {
-    let mut compiler = compiler::Compiler::new(source);
-    match compiler.compile() {
-        Ok(codes) => {
-            let mut vm = vm::VirtualMachine::new(codes);
-            match vm.interpret() {
-                Ok(_) => {
-                    tracing::info!("Interpretation completed");
-                }
-                Err(error) => {
-                    tracing::error!("Error: {:?}", error);
-                }
-            }
+    let mut vm = vm::VirtualMachine::new();
+    match vm.interpret(source) {
+        Ok(_) => {
+            tracing::info!("Interpretation completed");
         }
         Err(error) => {
             tracing::error!("Error: {:?}", error);

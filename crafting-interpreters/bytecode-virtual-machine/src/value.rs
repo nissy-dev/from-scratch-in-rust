@@ -10,16 +10,17 @@ pub enum Value {
     Object(Object),
 }
 
-enum FunctionType {
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd)]
+pub enum FunctionType {
     Function,
-    script,
+    Script,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd)]
 pub struct Function {
     arity: usize,
     name: String,
-    codes: OpCodes,
+    pub codes: OpCodes,
 }
 
 impl Function {

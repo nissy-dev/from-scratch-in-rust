@@ -1,9 +1,9 @@
 use crate::{
-    code::{OpCode, OpCodes},
+    code::OpCode,
     lexer::Scanner,
     parser::{ParseError, Parser},
     token::{Precedence, Token, TokenType},
-    value::{Object, Value},
+    value::{Function, FunctionType, Object, Value},
 };
 
 #[derive(Debug)]
@@ -35,7 +35,8 @@ impl Local {
 #[derive(Debug)]
 pub struct Compiler {
     parser: Parser,
-    codes: OpCodes,
+    function: Function,
+    function_type: FunctionType,
     locals: Vec<Local>,
     local_cnt: usize,
     scope_depth: isize,
@@ -45,14 +46,15 @@ impl Compiler {
     pub fn new(source: String) -> Self {
         Compiler {
             parser: Parser::new(Scanner::new(source)),
-            codes: Vec::new(),
+            function: Function::new(""),
+            function_type: FunctionType::Script,
             locals: Vec::new(),
             local_cnt: 0,
             scope_depth: 0,
         }
     }
 
-    pub fn compile(&mut self) -> Result<OpCodes, CompileError> {
+    pub fn compile(&mut self) -> Result<Function, CompileError> {
         self.parser.advance()?;
         while !self.parser.match_token(TokenType::EOF)? {
             self.declaration()?;
@@ -60,7 +62,7 @@ impl Compiler {
         self.parser
             .consume(TokenType::EOF, "Expect end of expression")?;
         self.write_op_code(OpCode::Return)?;
-        Ok(self.codes.clone())
+        Ok(self.function.clone())
     }
 
     fn declaration(&mut self) -> Result<(), CompileError> {
@@ -135,7 +137,7 @@ impl Compiler {
     }
 
     fn while_statement(&mut self) -> Result<(), CompileError> {
-        let loop_start = self.codes.len();
+        let loop_start = self.function.codes.len();
         self.parser
             .consume(TokenType::LEFT_PAREN, "Expect '(' after 'while'")?;
         self.expression()?;
@@ -167,7 +169,7 @@ impl Compiler {
         }
 
         // condition
-        let mut loop_start = self.codes.len();
+        let mut loop_start = self.function.codes.len();
         let mut exit_jump = None;
         if !self.parser.match_token(TokenType::SEMICOLON)? {
             self.expression()?;
@@ -180,7 +182,7 @@ impl Compiler {
         // increment
         if !self.parser.match_token(TokenType::RIGHT_PAREN)? {
             let body_jump = self.write_op_code(OpCode::Jump(0))?;
-            let increment_start = self.codes.len();
+            let increment_start = self.function.codes.len();
             self.expression()?;
             self.write_op_code(OpCode::Pop)?;
             self.parser
@@ -487,9 +489,10 @@ impl Compiler {
     }
 
     fn write_op_code(&mut self, code: OpCode) -> Result<usize, CompileError> {
-        self.codes
+        self.function
+            .codes
             .push((code, self.parser.previous_token()?.location));
-        Ok(self.codes.len() - 1)
+        Ok(self.function.codes.len() - 1)
     }
 
     fn begin_scope(&mut self) {
@@ -531,13 +534,13 @@ impl Compiler {
     }
 
     fn patch_jump(&mut self, offset: usize) -> Result<(), CompileError> {
-        let jump = self.codes.len() - offset - 1;
-        match self.codes.get(offset) {
+        let jump = self.function.codes.len() - offset - 1;
+        match self.function.codes.get(offset) {
             Some((OpCode::JumpIfFalse(_), loc)) => {
-                self.codes[offset] = (OpCode::JumpIfFalse(jump), loc.clone());
+                self.function.codes[offset] = (OpCode::JumpIfFalse(jump), loc.clone());
             }
             Some((OpCode::Jump(_), loc)) => {
-                self.codes[offset] = (OpCode::Jump(jump), loc.clone());
+                self.function.codes[offset] = (OpCode::Jump(jump), loc.clone());
             }
             _ => {
                 tracing::error!("Invalid jump operand");
@@ -549,7 +552,7 @@ impl Compiler {
     }
 
     fn emit_loop(&mut self, loop_start: usize) -> Result<(), CompileError> {
-        let offset = self.codes.len() - loop_start + 1;
+        let offset = self.function.codes.len() - loop_start + 1;
         self.write_op_code(OpCode::Loop(offset))?;
         Ok(())
     }
