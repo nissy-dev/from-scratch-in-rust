@@ -170,6 +170,8 @@ impl Compiler {
             self.print_statement()
         } else if self.parser.match_token(TokenType::IF)? {
             self.if_statement()
+        } else if self.parser.match_token(TokenType::RETURN)? {
+            self.return_statement()
         } else if self.parser.match_token(TokenType::WHILE)? {
             self.while_statement()
         } else if self.parser.match_token(TokenType::FOR)? {
@@ -210,6 +212,19 @@ impl Compiler {
         }
         self.patch_jump(else_jump)?;
 
+        Ok(())
+    }
+
+    fn return_statement(&mut self) -> Result<(), CompileError> {
+        if self.parser.match_token(TokenType::SEMICOLON)? {
+            self.write_op_code(OpCode::Nil)?;
+            self.write_op_code(OpCode::Return)?;
+        } else {
+            self.expression()?;
+            self.parser
+                .consume(TokenType::SEMICOLON, "Expect ';' after return value")?;
+            self.write_op_code(OpCode::Return)?;
+        }
         Ok(())
     }
 

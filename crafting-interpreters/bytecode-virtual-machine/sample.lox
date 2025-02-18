@@ -38,7 +38,13 @@ while (i < 2) {
 }
 
 fun test() {
-  print "function";
+  print "call test";
 }
 
 test();
+
+fun sum(a, b) {
+  return a + b;
+}
+
+print sum(1, 2);
