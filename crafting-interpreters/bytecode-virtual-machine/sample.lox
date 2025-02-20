@@ -1,50 +1,52 @@
-var beverage = "cafe au lait";
-var breakfast = "beignets with " + beverage;
-print breakfast;
-var breakfast = "beignets";
-var beverage = "cafe au lait";
-breakfast = "beignets with " + beverage;
-print breakfast;
-
-{
-  var a = "hello";
-  print a;
-  {
-    print a;
-    {
-      a = a + " world!";
-      print a;
-    }
+fun outer() {
+  var x = "before";
+  fun inner() {
+    x = "assigned";
   }
+  inner();
+  print x;
 }
+outer();
 
-if (false or true) {
-  print "true";
-}
-if (false and true) {
-  print "true";
-} else {
-  print "false";
-}
-
-for (var j = 0; j < 2; j = j + 1) {
-  print "for loop";
-}
-
-var i = 0;
-while (i < 2) {
-  print "while loop";
-  i = i + 1;
-}
-
-fun test() {
-  print "call test";
-}
-
-test();
-
-fun sum(a, b) {
-  return a + b;
-}
-
-print sum(1, 2);
+// for (var i=0; i<3; i=i+1) {
+//   print i;
+// }
+//
+// fun outer() {
+//   var x = "outside";
+//   fun inner() {
+//     print x;
+//   }
+//   inner();
+// }
+// outer();
+//
+// fun outer() {
+//   var x = "outside";
+//   fun inner() {
+//     print x;
+//   }
+//
+//   return inner;
+// }
+//
+// var closure = outer();
+// closure();
+//
+// var globalSet;
+// var globalGet;
+//
+// fun main() {
+//   var a = "initial";
+//
+//   fun set() { a = "updated"; }
+//   fun get() { print a; }
+//
+//   globalSet = set;
+//   globalGet = get;
+// }
+//
+// main();
+// globalSet();
+// globalGet();
+//

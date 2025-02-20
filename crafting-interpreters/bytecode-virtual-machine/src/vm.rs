@@ -1,9 +1,9 @@
 use crate::{
     code::OpCode,
-    compiler::{CompileError, Compiler},
+    compiler::{CompileError, Compiler, UpValue},
     table::Table,
     token::Location,
-    value::{Function, Object, Value},
+    value::{Closure, Object, Value},
 };
 
 #[derive(Debug)]
@@ -20,15 +20,15 @@ impl From<CompileError> for InterpretError {
 
 #[derive(Debug, Clone)]
 struct CallFrame {
-    function: Function,
+    closure: Closure,
     ip: usize,
     stack_top: usize,
 }
 
 impl CallFrame {
-    fn new(function: Function, stack_top: usize) -> Self {
+    fn new(closure: Closure, stack_top: usize) -> Self {
         CallFrame {
-            function,
+            closure,
             ip: 0,
             stack_top,
         }
@@ -64,15 +64,20 @@ impl VirtualMachine {
     pub fn interpret(&mut self, source: String) -> Result<(), InterpretError> {
         let mut compiler = Compiler::new(source);
         let function = compiler.compile()?;
-        self.frames.push(CallFrame::new(function, 0));
+        self.frames.push(CallFrame::new(Closure::new(function), 0));
         self.frame_cnt += 1;
         self.run()
     }
 
     fn run(&mut self) -> Result<(), InterpretError> {
         if let Some(mut frame) = self.frames.pop() {
-            while frame.ip < frame.function.codes.len() {
-                let (instruction, loc) = frame.function.codes[frame.ip].clone();
+            tracing::debug!("Running frame: {:?}", frame);
+            tracing::debug!("=============================");
+            while frame.ip < frame.closure.function.codes.len() {
+                let (instruction, loc) = frame.closure.function.codes[frame.ip].clone();
+                tracing::debug!("Running instruction: {:?} at {:?}", instruction, loc);
+                tracing::debug!("Before Stack: {:?}", self.stack);
+                // tracing::debug!("Closure: {:?}", frame.closure);
                 self.execute_operation(instruction, &mut frame, &loc)?;
                 frame.ip += 1;
             }
@@ -114,6 +119,9 @@ impl VirtualMachine {
             OpCode::Jump(jump_offset) => self.jump_op(frame, jump_offset)?,
             OpCode::Loop(loop_offset) => self.loop_op(frame, loop_offset)?,
             OpCode::Call(arg_count) => self.call_op(arg_count, loc)?,
+            OpCode::Closure(object, up_values) => self.closure_op(frame, object, up_values, loc)?,
+            OpCode::GetUpValue(slot) => self.get_up_value_op(frame, slot, loc)?,
+            OpCode::SetUpValue(slot) => self.set_up_value_op(frame, slot, loc)?,
         }
 
         Ok(())
@@ -272,17 +280,72 @@ impl VirtualMachine {
 
     fn call_op(&mut self, arg_count: usize, loc: &Location) -> Result<(), InterpretError> {
         let stack_top = self.stack.len() - arg_count - 1;
-        if let Some(Value::Object(Object::Function(function))) = self.stack.get(stack_top) {
-            if function.arity != arg_count {
+        if let Value::Object(Object::Closure(closure)) = self.stack.get(stack_top).unwrap() {
+            if closure.function.arity != arg_count {
                 return self.report_error(loc, "Incorrect number of arguments");
             }
             self.frames
-                .push(CallFrame::new(function.clone(), stack_top + 1));
+                .push(CallFrame::new(closure.clone(), stack_top + 1));
             self.frame_cnt += 1;
             self.run()?;
             Ok(())
         } else {
-            self.report_error(loc, "Can only call functions")
+            self.report_error(loc, "Can only call functions and closures")
+        }
+    }
+
+    fn closure_op(
+        &mut self,
+        frame: &CallFrame,
+        object: Object,
+        up_values: Vec<UpValue>,
+        loc: &Location,
+    ) -> Result<(), InterpretError> {
+        if let Object::Function(function) = object {
+            let mut closure = Closure::new(function);
+            for up_value in up_values {
+                if up_value.is_local {
+                    closure
+                        .up_values
+                        .push(self.stack[frame.stack_top + up_value.index].clone());
+                } else {
+                    closure
+                        .up_values
+                        .push(frame.closure.up_values[up_value.index].clone());
+                }
+            }
+            self.stack_push(Value::Object(Object::Closure(closure)));
+            Ok(())
+        } else {
+            self.report_error(loc, "Can only create closures from functions")
+        }
+    }
+
+    fn get_up_value_op(
+        &mut self,
+        frame: &CallFrame,
+        slot: usize,
+        loc: &Location,
+    ) -> Result<(), InterpretError> {
+        if let Some(value) = frame.closure.up_values.get(slot) {
+            self.stack_push(value.clone());
+            Ok(())
+        } else {
+            self.report_error(loc, "No up value to get")
+        }
+    }
+
+    fn set_up_value_op(
+        &mut self,
+        frame: &mut CallFrame,
+        slot: usize,
+        loc: &Location,
+    ) -> Result<(), InterpretError> {
+        if let Some(value) = self.stack.last() {
+            frame.closure.up_values[slot] = value.clone();
+            Ok(())
+        } else {
+            self.report_error(loc, "No up value to set")
         }
     }
 

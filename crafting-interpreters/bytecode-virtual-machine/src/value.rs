@@ -34,9 +34,25 @@ impl Function {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd)]
+pub struct Closure {
+    pub function: Function,
+    pub up_values: Vec<Value>,
+}
+
+impl Closure {
+    pub fn new(function: Function) -> Self {
+        Closure {
+            function,
+            up_values: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd)]
 pub enum Object {
     String(String),
     Function(Function),
+    Closure(Closure),
 }
 
 impl Value {
@@ -121,7 +137,8 @@ impl fmt::Display for Object {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Object::String(val) => write!(f, "{}", val),
-            Object::Function(val) => write!(f, "<fn {}>", val.name),
+            Object::Function(function) => write!(f, "<function {}>", function.name),
+            Object::Closure(closure) => write!(f, "<closure {}>", closure.function.name),
         }
     }
 }

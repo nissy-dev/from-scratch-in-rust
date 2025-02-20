@@ -1,4 +1,8 @@
-use crate::{token::Location, value::Value};
+use crate::{
+    compiler::UpValue,
+    token::Location,
+    value::{Object, Value},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd)]
 pub enum OpCode {
@@ -27,6 +31,9 @@ pub enum OpCode {
     Jump(usize),
     Loop(usize),
     Call(usize),
+    Closure(Object, Vec<UpValue>),
+    GetUpValue(usize),
+    SetUpValue(usize),
 }
 
 pub type OpCodes = Vec<(OpCode, Location)>;

@@ -34,6 +34,18 @@ impl Local {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd)]
+pub struct UpValue {
+    pub index: usize,
+    pub is_local: bool,
+}
+
+impl UpValue {
+    fn new(index: usize, is_local: bool) -> Self {
+        UpValue { index, is_local }
+    }
+}
+
 #[derive(Debug)]
 struct CompilerEnv {
     function: Function,
@@ -42,6 +54,7 @@ struct CompilerEnv {
     local_cnt: usize,
     scope_depth: isize,
     enclosing: Option<Rc<RefCell<CompilerEnv>>>,
+    up_values: Vec<UpValue>,
 }
 
 impl CompilerEnv {
@@ -53,6 +66,7 @@ impl CompilerEnv {
             local_cnt: 0,
             scope_depth: 0,
             enclosing,
+            up_values: Vec::new(),
         }
     }
 }
@@ -144,8 +158,9 @@ impl Compiler {
             .consume(TokenType::LEFT_BRACE, "Expect '{' before function body")?;
         self.block()?;
 
+        let up_values = self.env.borrow().up_values.clone();
         let function = self.end_compiler()?;
-        self.write_op_code(OpCode::Constant(Value::Object(Object::Function(function))))?;
+        self.write_op_code(OpCode::Closure(Object::Function(function), up_values))?;
 
         Ok(())
     }
@@ -582,23 +597,25 @@ impl Compiler {
     }
 
     fn named_variable(&mut self, name: String, can_assign: bool) -> Result<(), CompileError> {
-        if let Some(index) = self.resolve_local(&name) {
-            if can_assign && self.parser.match_token(TokenType::EQUAL)? {
-                self.expression()?;
-                self.write_op_code(OpCode::SetLocal(index))?;
-            } else {
-                self.write_op_code(OpCode::GetLocal(index))?;
-            }
+        let mut get_op = OpCode::GetGlobal;
+        let mut set_op = OpCode::SetGlobal;
+
+        if let Some(index) = self.resolve_local(self.env.clone(), &name) {
+            get_op = OpCode::GetLocal(index);
+            set_op = OpCode::SetLocal(index);
+        } else if let Some(index) = self.resolve_up_value(self.env.clone(), &name) {
+            get_op = OpCode::GetUpValue(index);
+            set_op = OpCode::SetUpValue(index);
         } else {
             let value = Value::Object(Object::String(name));
             self.write_op_code(OpCode::Constant(value))?;
+        }
 
-            if can_assign && self.parser.match_token(TokenType::EQUAL)? {
-                self.expression()?;
-                self.write_op_code(OpCode::SetGlobal)?;
-            } else {
-                self.write_op_code(OpCode::GetGlobal)?;
-            }
+        if can_assign && self.parser.match_token(TokenType::EQUAL)? {
+            self.expression()?;
+            self.write_op_code(set_op)?;
+        } else {
+            self.write_op_code(get_op)?;
         }
 
         Ok(())
@@ -636,9 +653,9 @@ impl Compiler {
         self.env.borrow_mut().local_cnt += 1;
     }
 
-    fn resolve_local(&mut self, name: &str) -> Option<usize> {
-        for i in (0..self.env.borrow().local_cnt).rev() {
-            let local = &self.env.borrow().locals[i];
+    fn resolve_local(&self, env: Rc<RefCell<CompilerEnv>>, name: &str) -> Option<usize> {
+        for i in (0..env.borrow().local_cnt).rev() {
+            let local = &env.borrow().locals[i];
             if local.name == name {
                 if local.depth == -1 {
                     tracing::error!("Can't read local variable in its own initializer.");
@@ -650,14 +667,44 @@ impl Compiler {
         None
     }
 
-    fn mark_initialized(&mut self) {
-        let (index, scope_depth) = {
-            let borrow_env = self.env.borrow();
-            if borrow_env.local_cnt == 0 {
-                return;
+    fn add_up_values(&self, env: Rc<RefCell<CompilerEnv>>, index: usize, is_local: bool) -> usize {
+        for (i, up_value) in env.borrow().up_values.iter().enumerate() {
+            if up_value.index == index && up_value.is_local == is_local {
+                return i;
             }
-            (borrow_env.local_cnt - 1, borrow_env.scope_depth)
+        }
+
+        env.borrow_mut()
+            .up_values
+            .push(UpValue::new(index, is_local));
+        env.borrow().up_values.len() - 1
+    }
+
+    fn resolve_up_value(&self, env: Rc<RefCell<CompilerEnv>>, name: &str) -> Option<usize> {
+        let enclosing_env = {
+            let borrowed_env = env.borrow();
+            borrowed_env.enclosing.clone()
         };
+
+        if let Some(enclosing_env) = enclosing_env {
+            if let Some(index) = self.resolve_local(enclosing_env.clone(), name) {
+                return Some(self.add_up_values(env.clone(), index, true));
+            }
+
+            if let Some(index) = self.resolve_up_value(enclosing_env.clone(), name) {
+                return Some(self.add_up_values(env.clone(), index, true));
+            }
+        }
+
+        None
+    }
+
+    fn mark_initialized(&mut self) {
+        if self.env.borrow().local_cnt == 0 {
+            return;
+        }
+        let index = self.env.borrow().local_cnt - 1;
+        let scope_depth = self.env.borrow().scope_depth;
         self.env.borrow_mut().locals[index].depth = scope_depth;
     }
 
@@ -666,6 +713,7 @@ impl Compiler {
             let borrow_env = self.env.borrow();
             borrow_env.function.codes.len() - offset - 1
         };
+
         let mut borrow_env = self.env.borrow_mut();
         match borrow_env.function.codes.get(offset) {
             Some((OpCode::JumpIfFalse(_), loc)) => {
