@@ -1,4 +1,4 @@
-use std::{fmt, ops};
+use std::{cell::RefCell, fmt, ops, rc::Rc};
 
 use crate::code::OpCodes;
 
@@ -36,7 +36,7 @@ impl Function {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd)]
 pub struct Closure {
     pub function: Function,
-    pub up_values: Vec<Value>,
+    pub up_values: Vec<Rc<RefCell<Value>>>,
 }
 
 impl Closure {

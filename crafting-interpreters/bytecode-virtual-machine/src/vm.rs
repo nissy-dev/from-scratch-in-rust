@@ -1,3 +1,5 @@
+use std::{cell::RefCell, rc::Rc};
+
 use crate::{
     code::OpCode,
     compiler::{CompileError, Compiler, UpValue},
@@ -44,7 +46,7 @@ impl CallFrame {
 #[derive(Debug)]
 pub struct VirtualMachine {
     globals: Table,
-    stack: Vec<Value>,
+    stack: Vec<Rc<RefCell<Value>>>,
     frames: Vec<CallFrame>,
     frame_cnt: usize,
     // pub object_list: Option<Rc<RefCell<ObjectNode>>>,
@@ -71,16 +73,18 @@ impl VirtualMachine {
 
     fn run(&mut self) -> Result<(), InterpretError> {
         if let Some(mut frame) = self.frames.pop() {
-            tracing::debug!("Running frame: {:?}", frame);
+            tracing::debug!("=============================");
+            tracing::debug!("Running frame: {:?}", frame.closure.function.name);
             tracing::debug!("=============================");
             while frame.ip < frame.closure.function.codes.len() {
                 let (instruction, loc) = frame.closure.function.codes[frame.ip].clone();
-                tracing::debug!("Running instruction: {:?} at {:?}", instruction, loc);
-                tracing::debug!("Before Stack: {:?}", self.stack);
-                // tracing::debug!("Closure: {:?}", frame.closure);
+                tracing::debug!("Running instruction: {} at {:?}", instruction, loc);
+                tracing::debug!("up values: {:?}", frame.closure.up_values);
                 self.execute_operation(instruction, &mut frame, &loc)?;
+                tracing::debug!("after stack: {:?}\n", self.stack);
                 frame.ip += 1;
             }
+            tracing::debug!("=============================\n");
             return Ok(());
         }
         tracing::error!("No frames to run");
@@ -136,7 +140,7 @@ impl VirtualMachine {
                 return Ok(());
             }
             self.stack.drain(stack_top - 1..);
-            self.stack_push(value);
+            self.stack_push(value.borrow().clone());
             Ok(())
         } else {
             self.report_error(loc, "No value to return")
@@ -145,18 +149,21 @@ impl VirtualMachine {
 
     fn negate_op(&mut self, loc: &Location) -> Result<(), InterpretError> {
         match self.stack.pop() {
-            Some(Value::Number(value)) => {
-                self.stack_push(Value::Number(-value));
-                Ok(())
+            Some(value) => {
+                if let Value::Number(value) = value.borrow().clone() {
+                    self.stack_push(Value::Number(-value));
+                    return Ok(());
+                }
             }
-            _ => self.report_error(loc, "Operand is not a number value"),
+            _ => { /* fall through */ }
         }
+        self.report_error(loc, "invalid condition for negate operation")
     }
 
     fn not_op(&mut self, loc: &Location) -> Result<(), InterpretError> {
         match self.stack.pop() {
             Some(value) => {
-                self.stack_push(Value::Boolean(value.is_falsy()));
+                self.stack_push(Value::Boolean(value.borrow().is_falsy()));
                 Ok(())
             }
             _ => self.report_error(loc, "Operand must have a value"),
@@ -170,7 +177,8 @@ impl VirtualMachine {
     ) -> Result<(), InterpretError> {
         match (self.stack.pop(), self.stack.pop()) {
             (Some(a), Some(b)) => {
-                self.stack_push(op(b, a));
+                let value = op(b.borrow().clone(), a.borrow().clone());
+                self.stack_push(value);
                 Ok(())
             }
             _ => self.report_error(loc, "Operands must have two values"),
@@ -179,7 +187,7 @@ impl VirtualMachine {
 
     fn print_op(&mut self, loc: &Location) -> Result<(), InterpretError> {
         if let Some(value) = self.stack.pop() {
-            println!("{}", value);
+            println!("{}", value.borrow());
             Ok(())
         } else {
             self.report_error(loc, "No value to print")
@@ -197,36 +205,44 @@ impl VirtualMachine {
 
     fn define_global_op(&mut self, loc: &Location) -> Result<(), InterpretError> {
         match (self.stack.pop(), self.stack.pop()) {
-            (Some(value), Some(Value::Object(Object::String(key)))) => {
-                self.globals.set(&key, value);
-                Ok(())
+            (Some(value), Some(key)) => {
+                if let Value::Object(Object::String(key)) = key.borrow().clone() {
+                    self.globals.set(&key, value.borrow().clone());
+                    return Ok(());
+                }
             }
-            _ => self.report_error(loc, "No valid values to define"),
+            _ => { /* fall through */ }
         }
+        self.report_error(loc, "invalid condition for define global operation")
     }
 
     fn get_global_op(&mut self, loc: &Location) -> Result<(), InterpretError> {
         match self.stack.pop() {
-            Some(Value::Object(Object::String(key))) => {
-                if let Some(value) = self.globals.get(&key) {
-                    self.stack_push(value.clone());
-                    Ok(())
-                } else {
-                    self.report_error(loc, "Undefined global variable")
+            Some(key) => {
+                if let Value::Object(Object::String(key)) = key.borrow().clone() {
+                    if let Some(value) = self.globals.get(&key) {
+                        self.stack_push(value.clone());
+                        return Ok(());
+                    }
                 }
             }
-            _ => self.report_error(loc, "No valid values to get"),
+            _ => { /* fall through */ }
         }
+        self.report_error(loc, "invalid condition for get global operation")
     }
 
     fn set_global_op(&mut self, loc: &Location) -> Result<(), InterpretError> {
         match (self.stack.pop(), self.stack.last()) {
-            (Some(value), Some(Value::Object(Object::String(key)))) => {
-                if self.globals.get(&key).is_none() {
-                    self.report_error(loc, "Undefined global variable")
+            (Some(value), Some(key)) => {
+                if let Value::Object(Object::String(key)) = key.borrow().clone() {
+                    if self.globals.get(&key).is_none() {
+                        self.report_error(loc, "Undefined global variable")
+                    } else {
+                        self.globals.set(&key, value.borrow().clone());
+                        Ok(())
+                    }
                 } else {
-                    self.globals.set(&key, value);
-                    Ok(())
+                    self.report_error(loc, "Invalid key type")
                 }
             }
             _ => self.report_error(loc, "No valid values to set"),
@@ -235,7 +251,8 @@ impl VirtualMachine {
 
     fn get_local_op(&mut self, slot: usize, loc: &Location) -> Result<(), InterpretError> {
         if let Some(value) = self.stack.get(slot) {
-            self.stack_push(value.clone());
+            let value = { value.borrow().clone() };
+            self.stack_push(value);
             Ok(())
         } else {
             self.report_error(loc, "Undefined local variable")
@@ -245,7 +262,8 @@ impl VirtualMachine {
     fn set_local_op(&mut self, slot: usize, loc: &Location) -> Result<(), InterpretError> {
         match (self.stack.last(), self.stack.get(slot)) {
             (Some(value), Some(_)) => {
-                self.stack[slot] = value.clone();
+                let value = { value.borrow().clone() };
+                self.stack[slot] = Rc::new(RefCell::new(value));
                 Ok(())
             }
             _ => self.report_error(loc, "No valid values to set"),
@@ -259,7 +277,7 @@ impl VirtualMachine {
         loc: &Location,
     ) -> Result<(), InterpretError> {
         if let Some(value) = self.stack.last() {
-            if value.is_falsy() {
+            if value.borrow().is_falsy() {
                 frame.ip += jump_offset;
             }
             Ok(())
@@ -280,17 +298,22 @@ impl VirtualMachine {
 
     fn call_op(&mut self, arg_count: usize, loc: &Location) -> Result<(), InterpretError> {
         let stack_top = self.stack.len() - arg_count - 1;
-        if let Value::Object(Object::Closure(closure)) = self.stack.get(stack_top).unwrap() {
-            if closure.function.arity != arg_count {
-                return self.report_error(loc, "Incorrect number of arguments");
+        if let Some(value) = self.stack.get(stack_top) {
+            let value = { value.borrow().clone() };
+            if let Value::Object(Object::Closure(closure)) = value {
+                if closure.function.arity != arg_count {
+                    return self.report_error(loc, "Incorrect number of arguments");
+                }
+                self.frames
+                    .push(CallFrame::new(closure.clone(), stack_top + 1));
+                self.frame_cnt += 1;
+                self.run()?;
+                Ok(())
+            } else {
+                self.report_error(loc, "Can only call functions and closures")
             }
-            self.frames
-                .push(CallFrame::new(closure.clone(), stack_top + 1));
-            self.frame_cnt += 1;
-            self.run()?;
-            Ok(())
         } else {
-            self.report_error(loc, "Can only call functions and closures")
+            self.report_error(loc, "No value to call")
         }
     }
 
@@ -305,9 +328,8 @@ impl VirtualMachine {
             let mut closure = Closure::new(function);
             for up_value in up_values {
                 if up_value.is_local {
-                    closure
-                        .up_values
-                        .push(self.stack[frame.stack_top + up_value.index].clone());
+                    let value = self.stack[frame.stack_top + up_value.index].clone();
+                    closure.up_values.push(value);
                 } else {
                     closure
                         .up_values
@@ -328,7 +350,7 @@ impl VirtualMachine {
         loc: &Location,
     ) -> Result<(), InterpretError> {
         if let Some(value) = frame.closure.up_values.get(slot) {
-            self.stack_push(value.clone());
+            self.stack_push(value.borrow().clone());
             Ok(())
         } else {
             self.report_error(loc, "No up value to get")
@@ -342,8 +364,12 @@ impl VirtualMachine {
         loc: &Location,
     ) -> Result<(), InterpretError> {
         if let Some(value) = self.stack.last() {
-            frame.closure.up_values[slot] = value.clone();
-            Ok(())
+            if let Some(up_value) = frame.closure.up_values.get_mut(slot) {
+                *up_value.borrow_mut() = value.borrow().clone();
+                Ok(())
+            } else {
+                self.report_error(loc, "Invalid up value slot")
+            }
         } else {
             self.report_error(loc, "No up value to set")
         }
@@ -356,7 +382,7 @@ impl VirtualMachine {
         //         next: self.object_list.clone(),
         //     })));
         // }
-        self.stack.push(value);
+        self.stack.push(Rc::new(RefCell::new(value)));
     }
 
     fn report_error(&self, loc: &Location, message: &str) -> Result<(), InterpretError> {
