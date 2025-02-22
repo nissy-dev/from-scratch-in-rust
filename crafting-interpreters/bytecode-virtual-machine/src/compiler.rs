@@ -158,6 +158,14 @@ impl Compiler {
             .consume(TokenType::LEFT_BRACE, "Expect '{' before function body")?;
         self.block()?;
 
+        if !matches!(
+            self.env.borrow().function.codes.last(),
+            Some((OpCode::Return, _))
+        ) {
+            self.write_op_code(OpCode::Nil)?;
+            self.write_op_code(OpCode::Return)?;
+        }
+
         let up_values = self.env.borrow().up_values.clone();
         let function = self.end_compiler()?;
         self.write_op_code(OpCode::Closure(Object::Function(function), up_values))?;
