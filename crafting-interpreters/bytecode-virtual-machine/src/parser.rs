@@ -44,7 +44,6 @@ impl Parser {
         self.previous = self.current.take();
         loop {
             let token = self.scanner.scan_token();
-            tracing::debug!("next token: {:?}", token);
             if !matches!(token.r#type, TokenType::Error(_)) {
                 self.current = Some(token);
                 break;

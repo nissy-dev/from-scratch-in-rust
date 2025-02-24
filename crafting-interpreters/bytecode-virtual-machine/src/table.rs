@@ -3,9 +3,9 @@ use crate::value::Value;
 const TABLE_MAX_LOAD: f64 = 0.75;
 
 #[derive(Debug, Clone)]
-struct Entry {
+pub struct Entry {
     key: Option<String>,
-    value: Value,
+    pub value: Value,
     is_deleted: bool,
 }
 
@@ -27,7 +27,7 @@ impl Entry {
 pub struct Table {
     count: usize,
     capacity: usize,
-    entries: Vec<Entry>,
+    pub entries: Vec<Entry>,
 }
 
 impl Table {

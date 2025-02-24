@@ -30,7 +30,6 @@ impl Scanner {
         }
 
         let c = self.advance();
-        tracing::debug!("current char: {}", c);
         match c {
             '(' => self.make_token(TokenType::LEFT_PAREN),
             ')' => self.make_token(TokenType::RIGHT_PAREN),

@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, fmt, rc::Rc};
 
 use crate::{
     code::OpCode,
@@ -37,11 +37,23 @@ impl CallFrame {
     }
 }
 
-// #[derive(Debug)]
-// pub struct ObjectNode {
-//     value: Object,
-//     next: Option<Rc<RefCell<ObjectNode>>>,
-// }
+#[derive(Debug)]
+pub struct ObjectNode {
+    value: Rc<RefCell<Value>>,
+    next: Option<Rc<RefCell<ObjectNode>>>,
+}
+
+impl fmt::Display for ObjectNode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self.value)?;
+        // next がある場合は、再帰的に次のノードを表示
+        if let Some(next_node) = &self.next {
+            write!(f, " → {}", next_node.borrow())?;
+        }
+
+        Ok(())
+    }
+}
 
 #[derive(Debug)]
 pub struct VirtualMachine {
@@ -49,7 +61,7 @@ pub struct VirtualMachine {
     stack: Vec<Rc<RefCell<Value>>>,
     frames: Vec<CallFrame>,
     frame_cnt: usize,
-    // pub object_list: Option<Rc<RefCell<ObjectNode>>>,
+    pub object_list: Option<Rc<RefCell<ObjectNode>>>,
 }
 
 impl VirtualMachine {
@@ -59,7 +71,7 @@ impl VirtualMachine {
             frames: Vec::new(),
             stack: Vec::new(),
             frame_cnt: 0,
-            // object_list: None,
+            object_list: None,
         }
     }
 
@@ -83,6 +95,10 @@ impl VirtualMachine {
                 self.execute_operation(instruction, &mut frame, &loc)?;
                 tracing::debug!("after stack: {:?}\n", self.stack);
                 frame.ip += 1;
+                self.collect_gc(&frame);
+                if let Some(node) = self.object_list.clone() {
+                    tracing::debug!("object list: {}", node.borrow());
+                }
             }
             tracing::debug!("=============================\n");
             return Ok(());
@@ -375,14 +391,54 @@ impl VirtualMachine {
         }
     }
 
+    fn collect_gc(&mut self, frame: &CallFrame) {
+        let mut current = self.object_list.clone();
+        let mut prev: Option<Rc<RefCell<ObjectNode>>> = None;
+
+        while let Some(node) = current.clone() {
+            if !self.check_reachable_value(frame, node.borrow().value.clone()) {
+                prev = current;
+            } else {
+                if let Some(prev_node) = &prev {
+                    prev_node.borrow_mut().next = node.borrow().next.clone();
+                } else {
+                    self.object_list = node.borrow().next.clone();
+                }
+            }
+            current = node.borrow().next.clone();
+        }
+    }
+
+    fn check_reachable_value(&self, frame: &CallFrame, value: Rc<RefCell<Value>>) -> bool {
+        // check stack
+        if self.stack.contains(&value) {
+            return true;
+        }
+
+        // check globals
+        for entry in self.globals.entries.iter() {
+            if entry.value == *value.borrow() {
+                return true;
+            }
+        }
+
+        // check up values
+        if frame.closure.up_values.contains(&value) {
+            return true;
+        }
+
+        false
+    }
+
     fn stack_push(&mut self, value: Value) {
-        // if let Value::Object(object) = value.clone() {
-        //     self.object_list = Some(Rc::new(RefCell::new(ObjectNode {
-        //         value: object,
-        //         next: self.object_list.clone(),
-        //     })));
-        // }
-        self.stack.push(Rc::new(RefCell::new(value)));
+        let value_ptr = Rc::new(RefCell::new(value.clone()));
+        if let Value::Object(_) = value {
+            self.object_list = Some(Rc::new(RefCell::new(ObjectNode {
+                value: value_ptr.clone(),
+                next: self.object_list.clone(),
+            })));
+        }
+        self.stack.push(value_ptr);
     }
 
     fn report_error(&self, loc: &Location, message: &str) -> Result<(), InterpretError> {
