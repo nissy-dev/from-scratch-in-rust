@@ -12,7 +12,7 @@ mod record;
 mod utils;
 
 fn main() -> utils::Result<()> {
-    let qname = "google.com";
+    let qname = "www.yahoo.com";
     let qtype = QueryType::A;
 
     // Google Public DNS の IP アドレス
@@ -43,12 +43,15 @@ fn main() -> utils::Result<()> {
     let res_packet = DnsPacket::from_buffer(&mut res_buffer)?;
     println!("{:#?}", res_packet.header);
 
+    println!("Questions:");
     for q in res_packet.questions {
         println!("{:#?}", q);
     }
+    println!("Answers:");
     for rec in res_packet.answers {
         println!("{:#?}", rec);
     }
+    println!("Authorities:");
     for rec in res_packet.authorities {
         println!("{:#?}", rec);
     }
