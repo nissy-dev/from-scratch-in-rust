@@ -1,6 +1,13 @@
-[package]
-name = "oauth-oidc"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+members = [
+    "auth-server",
+    "resource-server",
+    "client",
+]
 
-[dependencies]
+[workspace.dependencies]
+axum = { version = "=0.8.3" }
+serde = { version = "=1.0.219", features = ["derive"] }
+tokio = { version = "=1.44.2", features = ["full"] }
+tracing = "=0.1.41"
+tracing-subscriber = { version = "=0.3.19", features = ["env-filter"] }
