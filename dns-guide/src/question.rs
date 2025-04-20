@@ -53,9 +53,9 @@ impl DnsQuestion {
         // 1. read name
         buffer.read_qname(&mut self.name)?;
         // 2. read type
-        self.qtype = QueryType::from_num(buffer.read_u16()?); // qtype
-                                                              // 3. read class
-        let _ = buffer.read_u16()?; // class
+        self.qtype = QueryType::from_num(buffer.read_u16()?);
+        // 3. read class
+        let _ = buffer.read_u16()?;
 
         Ok(())
     }

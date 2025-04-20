@@ -1,4 +1,4 @@
-use std::net::UdpSocket;
+use std::net::{Ipv4Addr, UdpSocket};
 
 use buffer::BytePacketBuffer;
 use header::ResultCode;
@@ -44,7 +44,7 @@ fn handle_query(socket: &UdpSocket) -> utils::Result<()> {
     if let Some(question) = request.questions.pop() {
         println!("Received query: {:?}", question);
 
-        if let Ok(result) = lookup(&question.name, question.qtype) {
+        if let Ok(result) = recursive_lookup(&question.name, question.qtype) {
             packet.questions.push(question);
             packet.header.rescode = result.header.rescode;
 
@@ -77,10 +77,55 @@ fn handle_query(socket: &UdpSocket) -> utils::Result<()> {
     Ok(())
 }
 
-fn lookup(qname: &str, qtype: QueryType) -> utils::Result<DnsPacket> {
-    // Google's public DNS を使う
-    let server = ("8.8.8.8", 53);
+fn recursive_lookup(qname: &str, qtype: QueryType) -> utils::Result<DnsPacket> {
+    // root NS server は 13 個あり、その１つのアドレスを使う
+    // ref: https://www.internic.net/domain/named.root
+    let mut ns = "198.41.0.4".parse::<Ipv4Addr>().unwrap();
 
+    loop {
+        println!("attempting lookup of {:?} {} with ns {}", qtype, qname, ns);
+
+        let ns_copy = ns;
+        // dns server は通常 53 番ポートで待ち受けている
+        let server = (ns_copy, 53);
+        // DNS サーバーに問い合わせて、応答を受け取る
+        let response = lookup(qname, qtype, server)?;
+
+        // Answer が存在する場合は、再帰問い合わせの最後なので結果を返す
+        if !response.answers.is_empty() && response.header.rescode == ResultCode::NOERROR {
+            return Ok(response);
+        }
+
+        // レスポンスコードが NXDOMAIN の場合は、存在しないドメイン名なのでそのまま response を返す
+        if response.header.rescode == ResultCode::NXDOMAIN {
+            return Ok(response);
+        }
+
+        // 応答から次の NS server の ipv4 アドレスが分かった場合は、その値を ns の変数にセットしてループを続ける
+        if let Some(new_ns) = response.get_resolved_ns(qname) {
+            ns = new_ns;
+            continue;
+        }
+
+        // NS server の ipv4 アドレスがわからなかった場合
+        // NS server のホスト名を取得できるか確認する
+        let new_ns_name = match response.get_unresolved_ns(qname) {
+            Some(x) => x,
+            // ここは期待してないので、そのまま response を返す
+            None => return Ok(response),
+        };
+        // 再帰問い合わせを行って ipv4 アドレスを取得する
+        let recursive_response = recursive_lookup(&new_ns_name, QueryType::A)?;
+        if let Some(new_ns) = recursive_response.get_random_a() {
+            ns = new_ns;
+        } else {
+            // もし NS server の ipv4 アドレスが取得できなかった場合は、そのまま response を返す
+            return Ok(response);
+        }
+    }
+}
+
+fn lookup(qname: &str, qtype: QueryType, server: (Ipv4Addr, u16)) -> utils::Result<DnsPacket> {
     // UDP で DNS を問い合わせるためのソケットを作成
     let socket = UdpSocket::bind(("0.0.0.0", 43210))?;
 
