@@ -7,6 +7,7 @@ import {
   generateCodeVerifier,
 } from "~/utils";
 import { useStore } from "./store";
+import { useEffect } from "react";
 
 // 通常は認可の許可画面を表示する前に認証を行うことが多い
 export default function OAuth2() {
@@ -16,6 +17,7 @@ export default function OAuth2() {
   const clientId = useStore((s) => s.getItem("oauth2:client_id"));
   const redirectUri = useStore((s) => s.getItem("oauth2:redirect_uri"));
   const accessToken = useStore((s) => s.getItem("oauth2:access_token"));
+  const clientSecret = useStore((s) => s.getItem("oauth2:client_secret"));
 
   const onClickAuthButton = async () => {
     const codeVerifier = generateCodeVerifier();
@@ -38,6 +40,14 @@ export default function OAuth2() {
     // 認可エンドポイントへリダイレクト
     window.location.href = `${authServerUrl}/authorize?${searchParams.toString()}`;
   };
+
+  useEffect(() => {
+    // 5分後に session storage をクリアする
+    const id = setInterval(() => {
+      reset();
+    }, 5 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [reset]);
 
   return (
     <div>
