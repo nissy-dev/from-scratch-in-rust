@@ -3,6 +3,7 @@ import { create } from "zustand";
 type StoreKey =
   | "oauth2:state"
   | "oauth2:client_id"
+  | "oauth2:client_secret"
   | "oauth2:redirect_uri"
   | "oauth2:code_verifier"
   | "oauth2:access_token";

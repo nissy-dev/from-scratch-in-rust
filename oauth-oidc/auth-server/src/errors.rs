@@ -9,6 +9,7 @@ pub enum AppError {
     RedisError(redis::RedisError),
     JsonError(serde_json::Error),
     InValidParameter,
+    InValidHeader,
 }
 
 impl fmt::Display for AppError {
@@ -17,6 +18,7 @@ impl fmt::Display for AppError {
             Self::RedisError(e) => write!(f, "Redis error: {}", e),
             Self::JsonError(e) => write!(f, "JSON serialization error: {}", e),
             Self::InValidParameter => write!(f, "Invalid parameter"),
+            Self::InValidHeader => write!(f, "Invalid header"),
         }
     }
 }
@@ -41,6 +43,7 @@ impl IntoResponse for AppError {
             Self::RedisError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Database error"),
             Self::JsonError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Serialization error"),
             Self::InValidParameter => (StatusCode::BAD_REQUEST, "Invalid parameter"),
+            Self::InValidHeader => (StatusCode::BAD_REQUEST, "Invalid header"),
         };
 
         tracing::error!("Application error: {:?}", self);
