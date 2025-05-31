@@ -15,3 +15,5 @@ tower-http = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
+
+shared = { path = "../shared" }

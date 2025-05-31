@@ -1,5 +1,7 @@
 export const authServerUrl = "http://localhost:3123";
 
+export const resourceServerUrl = "http://localhost:6244";
+
 // code_verifier は、43 - 128文字の長さのランダムな文字列である必要があります。
 // 使える文字は、英大文字、英小文字、数字、"-"、"."、"_"、"~" です。
 // 今回は実装の簡略化のため、英大文字、英小文字、数字のみを使用します。

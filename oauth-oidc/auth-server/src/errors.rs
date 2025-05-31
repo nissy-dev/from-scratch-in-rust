@@ -8,6 +8,8 @@ use std::fmt;
 pub enum AppError {
     RedisError(redis::RedisError),
     JsonError(serde_json::Error),
+    JwtEncodeError(String),
+    JwkCreateError(String),
     InValidParameter,
     InValidHeader,
 }
@@ -17,6 +19,8 @@ impl fmt::Display for AppError {
         match self {
             Self::RedisError(e) => write!(f, "Redis error: {}", e),
             Self::JsonError(e) => write!(f, "JSON serialization error: {}", e),
+            Self::JwtEncodeError(e) => write!(f, "JWT encoding error: {}", e),
+            Self::JwkCreateError(e) => write!(f, "JWK creation error: {}", e),
             Self::InValidParameter => write!(f, "Invalid parameter"),
             Self::InValidHeader => write!(f, "Invalid header"),
         }
@@ -42,6 +46,8 @@ impl IntoResponse for AppError {
         let (status, error_message) = match self {
             Self::RedisError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Database error"),
             Self::JsonError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Serialization error"),
+            Self::JwtEncodeError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "JWT encoding error"),
+            Self::JwkCreateError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "JWK creation error"),
             Self::InValidParameter => (StatusCode::BAD_REQUEST, "Invalid parameter"),
             Self::InValidHeader => (StatusCode::BAD_REQUEST, "Invalid header"),
         };

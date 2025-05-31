@@ -91,12 +91,12 @@ export default function OAuth2Clients() {
           <p>リダイレクト URI: {redirectUri}</p>
           <p> Client Credentials Grant のコマンド</p>
           {/* prettier-ignore */}
-          <code>
+          <p>
             curl -X POST {authServerUrl}/token
               -H "Authorization: Basic {btoa(`${clientId}:${clientSecret}`)}"
               -H "Content-Type: application/x-www-form-urlencoded"
               -d "grant_type=client_credentials&client_id={clientId}&client_secret={clientSecret}&scope=read"
-          </code>
+          </p>
         </div>
       )}
       <a href="/oauth2">OAuth2 デモ画面に戻る</a>

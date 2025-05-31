@@ -8,6 +8,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, prelude::BASE64_STANDARD,
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use shared::jwt::{encode_jwt_rs256, rsa_public_key_to_jwk, Claims, Jwk};
 use uuid::Uuid;
 
 use crate::{errors::AppError, AppState};
@@ -101,7 +102,6 @@ pub struct TokenResponse {
     scope: Option<String>,
 }
 
-#[axum::debug_handler]
 pub async fn token(
     headers: HeaderMap,
     State(state): State<AppState>,
@@ -133,6 +133,7 @@ async fn handle_authorization_code_flow(
     let key = format!("oauth2:code:{}", code);
     let str_data = conn.get::<_, String>(key).await?;
     let auth_data: AuthorizeStoredData = serde_json::from_str(&str_data)?;
+    let scope = auth_data.scope.as_ref();
 
     // redis から取得した redirect_uri と リクエストから来る redirect_uri が一致するか確認する
     if &auth_data.redirect_uri != redirect_uri {
@@ -147,11 +148,22 @@ async fn handle_authorization_code_flow(
         return Err(AppError::InValidParameter);
     }
 
+    let claims = Claims::new(
+        "http://localhost:3123".to_string(),
+        // resource server の URL
+        "http://localhost:6244".to_string(),
+        // authorization_code_flow の場合はユーザ認証して、ユーザー ID を使う場合が多い
+        uuid::Uuid::new_v4().to_string(),
+        scope.cloned(),
+    );
+    let jwt = encode_jwt_rs256(&claims, &state.key_id, &state.private_key)
+        .map_err(|e| AppError::JwtEncodeError(e.to_string()))?;
+
     Ok(Json(TokenResponse {
-        access_token: Uuid::new_v4().to_string(),
+        access_token: jwt,
         token_type: "Bearer".into(),
-        expires_in: 3600,
-        scope: auth_data.scope,
+        expires_in: claims.exp - claims.iat,
+        scope: scope.cloned(),
     }))
 }
 
@@ -174,10 +186,21 @@ async fn handle_client_credentials_flow(
         return Err(AppError::InValidParameter);
     }
 
+    let claims = Claims::new(
+        "http://localhost:3123".to_string(),
+        // resource server の URL
+        "http://localhost:6244".to_string(),
+        // client_credentials_flow の場合は client_id を使う
+        client_id,
+        scope.cloned(),
+    );
+    let jwt = encode_jwt_rs256(&claims, &state.key_id, &state.private_key)
+        .map_err(|e| AppError::JwtEncodeError(e.to_string()))?;
+
     Ok(Json(TokenResponse {
-        access_token: Uuid::new_v4().to_string(),
+        access_token: jwt,
         token_type: "Bearer".into(),
-        expires_in: 3600,
+        expires_in: claims.exp - claims.iat,
         scope: scope.cloned(),
     }))
 }
@@ -247,4 +270,15 @@ pub async fn create_client(
         redirect_uri: payload.redirect_uri,
         client_secret,
     }))
+}
+
+#[derive(Serialize)]
+pub struct JwksResponse {
+    keys: Vec<Jwk>,
+}
+
+pub async fn jwks_handler(State(state): State<AppState>) -> Result<Json<JwksResponse>, AppError> {
+    let jwk = rsa_public_key_to_jwk(&state.public_key, &state.key_id)
+        .map_err(|e| AppError::JwkCreateError(e.to_string()))?;
+    Ok(Json(JwksResponse { keys: vec![jwk] }))
 }

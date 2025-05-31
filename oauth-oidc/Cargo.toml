@@ -1,18 +1,23 @@
 [workspace]
 members = [
     "auth-server",
-    "resource-server"
+    "resource-server",
+    "shared"
 ]
 
 [workspace.dependencies]
 axum = { version = "=0.8.3", features= ["macros"] }
 base64 = { version = "=0.22.1" }
+chrono = { version = "=0.4.41", features = ["serde"] }
+rand = { version = "=0.8.5" }
 redis = { version = "=0.31.0", features = ["tokio-comp"] }
+reqwest = { version = "=0.12.18", features = ["json"] }
+rsa = { version = "=0.9.8", features = ["pem", "sha2"] }
 serde = { version = "=1.0.219", features = ["derive"] }
 serde_json = { version = "=1.0.140" }
 sha2 = { version = "=0.10.9" }
 tokio = { version = "=1.44.2", features = ["full"] }
-tower-http = { version = "=0.6.2", features = ["cors"] }
+tower-http = { version = "=0.6.4", features = ["cors"] }
 tracing = { version = "=0.1.41" }
 tracing-subscriber = { version = "=0.3.19", features = ["env-filter"] }
-uuid = {  version = "=1.16.0", features = ["v4"] }
+uuid = { version = "=1.16.0", features = ["v4"] }

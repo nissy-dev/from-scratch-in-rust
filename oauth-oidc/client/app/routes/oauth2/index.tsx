@@ -5,19 +5,21 @@ import {
   authServerUrl,
   generateCodeChallenge,
   generateCodeVerifier,
+  resourceServerUrl,
 } from "~/utils";
 import { useStore } from "./store";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 // 通常は認可の許可画面を表示する前に認証を行うことが多い
 export default function OAuth2() {
+  const [resource, setResource] = useState<string | null>(null);
+
   const setItem = useStore((s) => s.setItem);
   const reset = useStore((s) => s.reset);
 
   const clientId = useStore((s) => s.getItem("oauth2:client_id"));
   const redirectUri = useStore((s) => s.getItem("oauth2:redirect_uri"));
   const accessToken = useStore((s) => s.getItem("oauth2:access_token"));
-  const clientSecret = useStore((s) => s.getItem("oauth2:client_secret"));
 
   const onClickAuthButton = async () => {
     const codeVerifier = generateCodeVerifier();
@@ -41,6 +43,19 @@ export default function OAuth2() {
     window.location.href = `${authServerUrl}/authorize?${searchParams.toString()}`;
   };
 
+  const onClickGetResourceButton = async () => {
+    const resource = await fetch(`${resourceServerUrl}/resource`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+    if (!resource.ok) {
+      alert("リソースの取得に失敗しました。");
+      return;
+    }
+    alert(await resource.text());
+  };
+
   useEffect(() => {
     // 5分後に session storage をクリアする
     const id = setInterval(() => {
@@ -56,6 +71,7 @@ export default function OAuth2() {
       {accessToken && (
         <>
           <p>アクセストークン: {accessToken}</p>
+          <button onClick={onClickGetResourceButton}>リソースを取得</button>
           <button onClick={() => reset()}>リセット</button>
         </>
       )}
