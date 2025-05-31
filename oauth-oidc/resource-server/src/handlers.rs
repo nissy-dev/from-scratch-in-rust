@@ -13,14 +13,49 @@ pub async fn resource(
 ) -> Result<String, AppError> {
     // Authorization ヘッダから Bearer トークンを取得
     let token = parse_auth_header(&headers)?;
+
     // jwk に fetch して public_pem を取得する処理を取得する
     let jwks = fetch_jwks(&state.auth_server_url)
         .await
-        .map_err(|e| AppError::JwkFetchError(e.to_string()))?;
+        .map_err(|e| AppError::FetchError(e.to_string()))?;
 
-    decode_jwt_rs256(&token, &jwks).map_err(|e| AppError::JwtDecodeError(e.to_string()))?;
+    let claims =
+        decode_jwt_rs256(&token, &jwks).map_err(|e| AppError::JwtDecodeError(e.to_string()))?;
+    if claims.aud != state.expected_audience {
+        return Err(AppError::InvalidAudience);
+    }
+
+    // introspect のエンドポイントで token が active かどうかを確認する
+    // token の発行と token の利用のタイミングが違うので、発行から利用までの間に token が失効したり、
+    // scope などが変化してないかを auth server に問い合わせる
+    let info = fetch_introspect(&token, &state.auth_server_url)
+        .await
+        .map_err(|e| AppError::FetchError(e.to_string()))?;
+    if !info.active {
+        return Err(AppError::TokenInactive);
+    }
 
     Ok("Resource accessed!".into())
+}
+
+#[derive(Deserialize)]
+pub struct IntrospectResponse {
+    active: bool,
+}
+
+async fn fetch_introspect(
+    token: &str,
+    auth_server_url: &str,
+) -> Result<IntrospectResponse, Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/introspect", auth_server_url))
+        .form(&[("token", token)])
+        .send()
+        .await?
+        .json::<IntrospectResponse>()
+        .await?;
+    Ok(resp)
 }
 
 fn parse_auth_header(headers: &HeaderMap) -> Result<String, AppError> {
@@ -36,7 +71,7 @@ fn parse_auth_header(headers: &HeaderMap) -> Result<String, AppError> {
 }
 
 #[derive(Deserialize)]
-pub struct JwksResponse {
+struct JwksResponse {
     keys: Vec<Jwk>,
 }
 

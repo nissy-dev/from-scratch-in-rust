@@ -41,6 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/authorize", get(handlers::authorize))
         .route("/token", post(handlers::token))
         .route("/clients", post(handlers::create_client))
+        .route("/introspect", post(handlers::introspect))
         .route("/.well-known/jwks.json", get(handlers::jwks_handler))
         .with_state(state)
         .layer(cors);

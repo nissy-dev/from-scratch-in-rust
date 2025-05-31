@@ -82,6 +82,12 @@ pub async fn authorize(
     Ok(Redirect::to(&redirect_uri))
 }
 
+// introspect の処理で利用する
+#[derive(Deserialize, Serialize, Debug)]
+struct TokenInfo {
+    active: bool,
+}
+
 #[derive(Deserialize, Serialize, Debug)]
 pub struct TokenRequest {
     grant_type: String,
@@ -159,10 +165,19 @@ async fn handle_authorization_code_flow(
     let jwt = encode_jwt_rs256(&claims, &state.key_id, &state.private_key)
         .map_err(|e| AppError::JwtEncodeError(e.to_string()))?;
 
+    let expires_in = claims.exp - claims.iat;
+
+    // トークン情報を redis に保存する
+    let token_info = TokenInfo { active: true };
+    let token_key = format!("oauth2:token:{}", jwt);
+    let serialized_token_info = serde_json::to_string(&token_info)?;
+    conn.set_ex::<_, _, String>(token_key, serialized_token_info, expires_in as u64)
+        .await?;
+
     Ok(Json(TokenResponse {
         access_token: jwt,
         token_type: "Bearer".into(),
-        expires_in: claims.exp - claims.iat,
+        expires_in: expires_in,
         scope: scope.cloned(),
     }))
 }
@@ -246,6 +261,7 @@ pub struct CreateClientResponse {
     client_secret: String,
 }
 
+// 今回は適当だが、Dynamic Client Registration の仕様に従うことが望ましい
 pub async fn create_client(
     State(state): State<AppState>,
     Json(payload): Json<CreateClientRequest>,
@@ -269,6 +285,41 @@ pub async fn create_client(
         client_id,
         redirect_uri: payload.redirect_uri,
         client_secret,
+    }))
+}
+
+#[derive(Deserialize)]
+pub struct IntrospectRequest {
+    token: String,
+}
+
+#[derive(Serialize)]
+pub struct IntrospectResponse {
+    active: bool,
+}
+
+pub async fn introspect(
+    State(state): State<AppState>,
+    Form(payload): Form<IntrospectRequest>,
+) -> Result<Json<IntrospectResponse>, AppError> {
+    let mut conn = state.redis.get_multiplexed_async_connection().await?;
+    let key = format!("oauth2:token:{}", payload.token);
+
+    let str_data = match conn.get::<_, Option<String>>(key).await {
+        Ok(Some(data)) => data,
+        _ => {
+            return Ok(Json(IntrospectResponse { active: false }));
+        }
+    };
+    let token_info: TokenInfo = match serde_json::from_str(&str_data) {
+        Ok(info) => info,
+        Err(_) => {
+            return Ok(Json(IntrospectResponse { active: false }));
+        }
+    };
+
+    Ok(Json(IntrospectResponse {
+        active: token_info.active,
     }))
 }
 

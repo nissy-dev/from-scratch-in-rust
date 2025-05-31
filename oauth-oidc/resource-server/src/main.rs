@@ -11,6 +11,7 @@ mod handlers;
 #[derive(Clone)]
 struct AppState {
     auth_server_url: String,
+    expected_audience: String,
 }
 
 #[tokio::main]
@@ -19,6 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let state = AppState {
         auth_server_url: "http://localhost:3123".to_string(),
+        expected_audience: "http://localhost:6244".to_string(),
     };
 
     let cors = CorsLayer::new()

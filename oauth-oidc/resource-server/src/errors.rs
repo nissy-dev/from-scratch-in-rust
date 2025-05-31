@@ -7,7 +7,9 @@ use std::fmt;
 #[derive(Debug)]
 pub enum AppError {
     JwtDecodeError(String),
-    JwkFetchError(String),
+    FetchError(String),
+    TokenInactive,
+    InvalidAudience,
     InValidHeader,
 }
 
@@ -15,7 +17,9 @@ impl fmt::Display for AppError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::JwtDecodeError(e) => write!(f, "JWT decode error: {}", e),
-            Self::JwkFetchError(e) => write!(f, "JWK fetching error: {}", e),
+            Self::FetchError(e) => write!(f, "Fetching error: {}", e),
+            Self::TokenInactive => write!(f, "Token is not active"),
+            Self::InvalidAudience => write!(f, "Invalid audience in JWT"),
             Self::InValidHeader => write!(f, "Invalid header provided"),
         }
     }
@@ -26,8 +30,10 @@ impl std::error::Error for AppError {}
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, error_message) = match self {
-            Self::JwkFetchError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "JWK fetching error"),
+            Self::FetchError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "fetching error"),
             Self::JwtDecodeError(_) => (StatusCode::UNAUTHORIZED, "JWT decode error"),
+            Self::TokenInactive => (StatusCode::UNAUTHORIZED, "Token is not active"),
+            Self::InvalidAudience => (StatusCode::FORBIDDEN, "Invalid audience in JWT"),
             Self::InValidHeader => (StatusCode::BAD_REQUEST, "Invalid header provided"),
         };
 
