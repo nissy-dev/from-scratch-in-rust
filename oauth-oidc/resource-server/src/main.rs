@@ -1,3 +1,4 @@
+use auth_server_client::AuthServerClient;
 use axum::{
     http::{self, HeaderValue, Method},
     routing::get,
@@ -5,12 +6,13 @@ use axum::{
 };
 use tower_http::cors::CorsLayer;
 
+mod auth_server_client;
 mod errors;
 mod handlers;
 
 #[derive(Clone)]
 struct AppState {
-    auth_server_url: String,
+    pub auth_server_client: AuthServerClient,
     expected_audience: String,
 }
 
@@ -19,7 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
     let state = AppState {
-        auth_server_url: "http://localhost:3123".to_string(),
+        auth_server_client: AuthServerClient::new("http://localhost:3123"),
         expected_audience: "http://localhost:6244".to_string(),
     };
 

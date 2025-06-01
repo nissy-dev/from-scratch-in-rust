@@ -5,24 +5,16 @@ use axum::{
     Form,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, prelude::BASE64_STANDARD, Engine};
-use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use shared::jwt::{encode_jwt_rs256, rsa_public_key_to_jwk, Claims, Jwk};
 use uuid::Uuid;
 
-use crate::{errors::AppError, AppState};
-
-#[derive(Deserialize, Serialize, Debug)]
-pub struct AuthorizeStoredData {
-    code: String,
-    client_id: String,
-    redirect_uri: String,
-    state: String,
-    code_challenge: String,
-    code_challenge_method: String,
-    scope: Option<String>,
-}
+use crate::{
+    errors::AppError,
+    store::{AuthorizeCodeData, ClientData, TokenData},
+    AppState,
+};
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct AuthorizeRequest {
@@ -37,10 +29,9 @@ pub struct AuthorizeRequest {
 
 pub async fn authorize(
     Query(params): Query<AuthorizeRequest>,
-    State(state): State<AppState>,
+    State(mut state): State<AppState>,
 ) -> Result<Redirect, AppError> {
-    let mut conn = state.redis.get_multiplexed_async_connection().await?;
-
+    // response_type が code であることを確認する
     if params.response_type != "code" {
         return Err(AppError::InValidParameter);
     }
@@ -53,16 +44,14 @@ pub async fn authorize(
     }
 
     // 登録されている Client か確認する
-    let key = format!("oauth2:client:{}", params.client_id);
-    let str_data = conn.get::<_, String>(key).await?;
-    let auth_client: OAuthClient = serde_json::from_str(&str_data)?;
+    let auth_client = state.store.read_client_data(&params.client_id).await?;
     if auth_client.redirect_uri != params.redirect_uri {
         return Err(AppError::InValidParameter);
     }
 
+    // 5分間有効な認可コードを生成する
     let auth_code = Uuid::new_v4().to_string();
-    // redis にデータを保存する (5分有効にする)
-    let auth_data = AuthorizeStoredData {
+    let auth_data = AuthorizeCodeData {
         code: auth_code.clone(),
         client_id: params.client_id.clone(),
         redirect_uri: params.redirect_uri.clone(),
@@ -71,21 +60,16 @@ pub async fn authorize(
         code_challenge_method: params.code_challenge_method.clone(),
         scope: params.scope.clone(),
     };
-    let serialized = serde_json::to_string(&auth_data)?;
-    let key = format!("oauth2:code:{}", auth_code);
-    conn.set_ex::<_, _, String>(key, serialized, 300).await?;
+    state
+        .store
+        .write_auth_code_data(&auth_code, &auth_data, 300)
+        .await?;
 
     let redirect_uri = format!(
         "{}?code={}&state={}",
         params.redirect_uri, &auth_code, params.state
     );
     Ok(Redirect::to(&redirect_uri))
-}
-
-// introspect の処理で利用する
-#[derive(Deserialize, Serialize, Debug)]
-struct TokenInfo {
-    active: bool,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -110,18 +94,18 @@ pub struct TokenResponse {
 
 pub async fn token(
     headers: HeaderMap,
-    State(state): State<AppState>,
+    State(mut state): State<AppState>,
     Form(params): Form<TokenRequest>,
 ) -> Result<Json<TokenResponse>, AppError> {
     match params.grant_type.as_str() {
-        "authorization_code" => handle_authorization_code_flow(&state, &params).await,
-        "client_credentials" => handle_client_credentials_flow(&state, &params, &headers).await,
+        "authorization_code" => handle_authorization_code_flow(&mut state, &params).await,
+        "client_credentials" => handle_client_credentials_flow(&mut state, &params, &headers).await,
         _ => Err(AppError::InValidParameter),
     }
 }
 
 async fn handle_authorization_code_flow(
-    state: &AppState,
+    state: &mut AppState,
     params: &TokenRequest,
 ) -> Result<Json<TokenResponse>, AppError> {
     let code = params.code.as_ref().ok_or(AppError::InValidParameter)?;
@@ -134,26 +118,23 @@ async fn handle_authorization_code_flow(
         .as_ref()
         .ok_or(AppError::InValidParameter)?;
 
-    let mut conn = state.redis.get_multiplexed_async_connection().await?;
+    // 認可コードから redis に保存していたデータを取得
+    let auth_code_data = state.store.read_auth_code_data(code).await?;
 
-    let key = format!("oauth2:code:{}", code);
-    let str_data = conn.get::<_, String>(key).await?;
-    let auth_data: AuthorizeStoredData = serde_json::from_str(&str_data)?;
-    let scope = auth_data.scope.as_ref();
-
-    // redis から取得した redirect_uri と リクエストから来る redirect_uri が一致するか確認する
-    if &auth_data.redirect_uri != redirect_uri {
+    // 取得した redirect_uri と リクエストから来る redirect_uri が一致するか確認する
+    if &auth_code_data.redirect_uri != redirect_uri {
         return Err(AppError::InValidParameter);
     }
 
-    // redis から取得した code_challenge と リクエストから来る code_verifier が一致するか検証する
+    // 取得した code_challenge と リクエストから来る code_verifier が一致するか検証する
     // 今回は S256 のみをサポートするので、 code_verifier を SHA256 でハッシュ化して、 base64url エンコードする
     let hash = Sha256::digest(code_verifier.as_bytes());
     let generated_code_challenge = URL_SAFE_NO_PAD.encode(hash);
-    if generated_code_challenge != auth_data.code_challenge {
+    if generated_code_challenge != auth_code_data.code_challenge {
         return Err(AppError::InValidParameter);
     }
 
+    let scope = auth_code_data.scope.as_ref();
     let claims = Claims::new(
         "http://localhost:3123".to_string(),
         // resource server の URL
@@ -165,39 +146,34 @@ async fn handle_authorization_code_flow(
     let jwt = encode_jwt_rs256(&claims, &state.key_id, &state.private_key)
         .map_err(|e| AppError::JwtEncodeError(e.to_string()))?;
 
-    let expires_in = claims.exp - claims.iat;
-
     // トークン情報を redis に保存する
-    let token_info = TokenInfo { active: true };
-    let token_key = format!("oauth2:token:{}", jwt);
-    let serialized_token_info = serde_json::to_string(&token_info)?;
-    conn.set_ex::<_, _, String>(token_key, serialized_token_info, expires_in as u64)
+    let token_data = TokenData { active: true };
+    let expires_in = claims.exp - claims.iat;
+    state
+        .store
+        .write_token_data(&jwt, &token_data, expires_in as u64)
         .await?;
 
     Ok(Json(TokenResponse {
         access_token: jwt,
         token_type: "Bearer".into(),
-        expires_in: expires_in,
+        expires_in,
         scope: scope.cloned(),
     }))
 }
 
 async fn handle_client_credentials_flow(
-    state: &AppState,
+    state: &mut AppState,
     params: &TokenRequest,
     headers: &HeaderMap,
 ) -> Result<Json<TokenResponse>, AppError> {
     let scope = params.scope.as_ref();
-    let mut conn = state.redis.get_multiplexed_async_connection().await?;
 
     // Basic ヘッダーから client_id と client_secret を取得する
     let (client_id, client_secret) = parse_basic_auth(headers)?;
 
-    // redis から取得した client_secret と リクエストから来る client_secret が一致するか確認する
-    let key = format!("oauth2:client:{}", client_id);
-    let str_data = conn.get::<_, String>(key).await?;
-    let auth_client: OAuthClient = serde_json::from_str(&str_data)?;
-    if auth_client.client_secret != client_secret {
+    let client_data = state.store.read_client_data(&client_id).await?;
+    if client_data.client_secret != client_secret {
         return Err(AppError::InValidParameter);
     }
 
@@ -239,14 +215,6 @@ fn parse_basic_auth(headers: &HeaderMap) -> Result<(String, String), AppError> {
     Ok((client_id, client_secret))
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct OAuthClient {
-    name: String,
-    client_id: String,
-    client_secret: String,
-    redirect_uri: String,
-}
-
 #[derive(Deserialize)]
 pub struct CreateClientRequest {
     name: String,
@@ -263,23 +231,20 @@ pub struct CreateClientResponse {
 
 // 今回は適当だが、Dynamic Client Registration の仕様に従うことが望ましい
 pub async fn create_client(
-    State(state): State<AppState>,
+    State(mut state): State<AppState>,
     Json(payload): Json<CreateClientRequest>,
 ) -> Result<Json<CreateClientResponse>, AppError> {
     let client_id = Uuid::new_v4().to_string();
     let client_secret = Uuid::new_v4().to_string();
 
     // redis にデータを保存しているが、実際には DB に保存して永続化する
-    let client = OAuthClient {
+    let client = ClientData {
         name: payload.name,
         client_id: client_id.clone(),
         client_secret: client_secret.clone(),
         redirect_uri: payload.redirect_uri.clone(),
     };
-    let mut conn = state.redis.get_multiplexed_async_connection().await?;
-    let serialized = serde_json::to_string(&client)?;
-    let key = format!("oauth2:client:{}", client_id);
-    conn.set_nx::<_, _, String>(key, serialized).await?;
+    state.store.write_client_data(&client_id, &client).await?;
 
     Ok(Json(CreateClientResponse {
         client_id,
@@ -299,27 +264,17 @@ pub struct IntrospectResponse {
 }
 
 pub async fn introspect(
-    State(state): State<AppState>,
+    State(mut state): State<AppState>,
     Form(payload): Form<IntrospectRequest>,
 ) -> Result<Json<IntrospectResponse>, AppError> {
-    let mut conn = state.redis.get_multiplexed_async_connection().await?;
-    let key = format!("oauth2:token:{}", payload.token);
-
-    let str_data = match conn.get::<_, Option<String>>(key).await {
-        Ok(Some(data)) => data,
-        _ => {
-            return Ok(Json(IntrospectResponse { active: false }));
-        }
-    };
-    let token_info: TokenInfo = match serde_json::from_str(&str_data) {
-        Ok(info) => info,
-        Err(_) => {
-            return Ok(Json(IntrospectResponse { active: false }));
-        }
-    };
+    let token_data = state
+        .store
+        .read_token_data(&payload.token)
+        .await
+        .map_or_else(|_| TokenData { active: false }, |data| data);
 
     Ok(Json(IntrospectResponse {
-        active: token_info.active,
+        active: token_data.active,
     }))
 }
 
@@ -328,7 +283,7 @@ pub struct JwksResponse {
     keys: Vec<Jwk>,
 }
 
-pub async fn jwks_handler(State(state): State<AppState>) -> Result<Json<JwksResponse>, AppError> {
+pub async fn jwks(State(state): State<AppState>) -> Result<Json<JwksResponse>, AppError> {
     let jwk = rsa_public_key_to_jwk(&state.public_key, &state.key_id)
         .map_err(|e| AppError::JwkCreateError(e.to_string()))?;
     Ok(Json(JwksResponse { keys: vec![jwk] }))
