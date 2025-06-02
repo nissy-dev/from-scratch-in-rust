@@ -1,9 +1,10 @@
 use axum::{
-    extract::{Json, Query, State},
+    extract::{Json, Query, Request, State},
     http::HeaderMap,
-    response::Redirect,
+    response::{Html, Redirect},
     Form,
 };
+use axum_extra::extract::{cookie::Cookie, CookieJar};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, prelude::BASE64_STANDARD, Engine};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -12,12 +13,12 @@ use uuid::Uuid;
 
 use crate::{
     errors::AppError,
-    store::{AuthorizeCodeData, ClientData, TokenData},
+    store::{AuthorizeCodeData, ClientData, SessionData, TokenData},
     AppState,
 };
 
 #[derive(Deserialize, Serialize, Debug)]
-pub struct AuthorizeRequest {
+pub struct AuthorizeQuery {
     response_type: String,
     client_id: String,
     redirect_uri: String,
@@ -28,24 +29,39 @@ pub struct AuthorizeRequest {
 }
 
 pub async fn authorize(
-    Query(params): Query<AuthorizeRequest>,
+    Query(query): Query<AuthorizeQuery>,
     State(mut state): State<AppState>,
-) -> Result<Redirect, AppError> {
+    cookie_jar: CookieJar,
+    request: Request,
+) -> Result<(CookieJar, Redirect), AppError> {
+    // ユーザーがログインしているか確認する
+    if !is_login(&mut state, &cookie_jar).await {
+        // ログイン後、再度認可エンドポイントへリダイレクトするために URL の情報をクエリパラメータで渡す
+        let uri = request
+            .uri()
+            .path_and_query()
+            .ok_or(AppError::InValidParameter)?;
+        let encoded_uri = URL_SAFE_NO_PAD.encode(uri.as_str().as_bytes());
+        let redirect_uri = format!("/login?redirect={}", encoded_uri);
+        // ログインしていない場合は、ログインページにリダイレクトする
+        return Ok((cookie_jar, Redirect::to(&redirect_uri)));
+    }
+
     // response_type が code であることを確認する
-    if params.response_type != "code" {
+    if query.response_type != "code" {
         return Err(AppError::InValidParameter);
     }
 
     // code_challenge_method が S256 であることを確認する
     // 本当は plain を指定することも可能だが、今回は S256 のみをサポートする
     // 安全性を考慮して、 S256 を使うことが推奨されている
-    if params.code_challenge_method != "S256" {
+    if query.code_challenge_method != "S256" {
         return Err(AppError::InValidParameter);
     }
 
     // 登録されている Client か確認する
-    let auth_client = state.store.read_client_data(&params.client_id).await?;
-    if auth_client.redirect_uri != params.redirect_uri {
+    let auth_client = state.store.read_client_data(&query.client_id).await?;
+    if auth_client.redirect_uri != query.redirect_uri {
         return Err(AppError::InValidParameter);
     }
 
@@ -53,12 +69,12 @@ pub async fn authorize(
     let auth_code = Uuid::new_v4().to_string();
     let auth_data = AuthorizeCodeData {
         code: auth_code.clone(),
-        client_id: params.client_id.clone(),
-        redirect_uri: params.redirect_uri.clone(),
-        state: params.state.clone(),
-        code_challenge: params.code_challenge.clone(),
-        code_challenge_method: params.code_challenge_method.clone(),
-        scope: params.scope.clone(),
+        client_id: query.client_id.clone(),
+        redirect_uri: query.redirect_uri.clone(),
+        state: query.state.clone(),
+        code_challenge: query.code_challenge.clone(),
+        code_challenge_method: query.code_challenge_method.clone(),
+        scope: query.scope.clone(),
     };
     state
         .store
@@ -67,13 +83,31 @@ pub async fn authorize(
 
     let redirect_uri = format!(
         "{}?code={}&state={}",
-        params.redirect_uri, &auth_code, params.state
+        query.redirect_uri, &auth_code, query.state
     );
-    Ok(Redirect::to(&redirect_uri))
+    Ok((
+        cookie_jar.remove(Cookie::from("session")),
+        Redirect::to(&redirect_uri),
+    ))
+}
+
+async fn is_login(state: &mut AppState, cookie_jar: &CookieJar) -> bool {
+    // cookie から sessionid を取得する
+    let session_id = match cookie_jar.get("session") {
+        Some(cookie) => cookie.value(),
+        None => return false,
+    };
+    // セッションデータを取得して、ユーザがログインしているか確認する
+    state
+        .store
+        .read_session_data(session_id)
+        .await
+        .ok()
+        .is_some()
 }
 
 #[derive(Deserialize, Serialize, Debug)]
-pub struct TokenRequest {
+pub struct TokenForm {
     grant_type: String,
     // Public client の場合は、 code_verifier, code, redirect_uri を使う。
     code_verifier: Option<String>,
@@ -95,7 +129,7 @@ pub struct TokenResponse {
 pub async fn token(
     headers: HeaderMap,
     State(mut state): State<AppState>,
-    Form(params): Form<TokenRequest>,
+    Form(params): Form<TokenForm>,
 ) -> Result<Json<TokenResponse>, AppError> {
     match params.grant_type.as_str() {
         "authorization_code" => handle_authorization_code_flow(&mut state, &params).await,
@@ -106,7 +140,7 @@ pub async fn token(
 
 async fn handle_authorization_code_flow(
     state: &mut AppState,
-    params: &TokenRequest,
+    params: &TokenForm,
 ) -> Result<Json<TokenResponse>, AppError> {
     let code = params.code.as_ref().ok_or(AppError::InValidParameter)?;
     let code_verifier = params
@@ -164,7 +198,7 @@ async fn handle_authorization_code_flow(
 
 async fn handle_client_credentials_flow(
     state: &mut AppState,
-    params: &TokenRequest,
+    params: &TokenForm,
     headers: &HeaderMap,
 ) -> Result<Json<TokenResponse>, AppError> {
     let scope = params.scope.as_ref();
@@ -254,7 +288,7 @@ pub async fn create_client(
 }
 
 #[derive(Deserialize)]
-pub struct IntrospectRequest {
+pub struct IntrospectForm {
     token: String,
 }
 
@@ -265,7 +299,7 @@ pub struct IntrospectResponse {
 
 pub async fn introspect(
     State(mut state): State<AppState>,
-    Form(payload): Form<IntrospectRequest>,
+    Form(payload): Form<IntrospectForm>,
 ) -> Result<Json<IntrospectResponse>, AppError> {
     let token_data = state
         .store
@@ -287,4 +321,99 @@ pub async fn jwks(State(state): State<AppState>) -> Result<Json<JwksResponse>, A
     let jwk = rsa_public_key_to_jwk(&state.public_key, &state.key_id)
         .map_err(|e| AppError::JwkCreateError(e.to_string()))?;
     Ok(Json(JwksResponse { keys: vec![jwk] }))
+}
+
+#[derive(Serialize)]
+pub struct OpenIDConfigurationResponse {
+    issuer: String,
+    authorization_endpoint: String,
+    token_endpoint: String,
+    jwks_uri: String,
+    response_types_supported: Vec<String>,
+    subject_types_supported: Vec<String>,
+    id_token_signing_alg_values_supported: Vec<String>,
+    scopes_supported: Vec<String>,
+    claims_supported: Vec<String>,
+}
+
+pub async fn openid_configuration() -> Result<Json<OpenIDConfigurationResponse>, AppError> {
+    Ok(Json(OpenIDConfigurationResponse {
+        issuer: "http://localhost:3123".into(),
+        authorization_endpoint: "http://localhost:3123/authorize".into(),
+        token_endpoint: "http://localhost:3123/token".into(),
+        jwks_uri: "http://localhost:3123/jwks".into(),
+        response_types_supported: vec!["code".into()],
+        subject_types_supported: vec!["public".into()],
+        id_token_signing_alg_values_supported: vec!["RS256".into()],
+        scopes_supported: vec!["openid".into(), "email".into(), "profile".into()],
+        claims_supported: vec!["sub".into(), "email".into(), "name".into()],
+    }))
+}
+
+#[derive(Deserialize)]
+pub struct LoginFormQuery {
+    redirect: Option<String>,
+}
+
+pub async fn login_form(Query(query): Query<LoginFormQuery>) -> Html<String> {
+    let redirect_uri = query.redirect;
+    match redirect_uri {
+        Some(uri) => Html(
+            format!(
+                r#"
+<h1>ログイン</h1>
+<form action="/login" method="post">
+    <input type="hidden" name="redirect" value="{uri}" />
+    <input type="text" name="name" placeholder="ユーザー名" />
+    <input type="password" name="password" placeholder="パスワード" />
+    <button type="submit">ログイン</button>
+</form>"#
+            )
+            .into(),
+        ),
+        None => Html("<p>リダイレクト先のURLが指定されていません。</p>".into()),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct LoginForm {
+    name: String,
+    password: String,
+    redirect: String,
+}
+
+#[axum::debug_handler]
+pub async fn login_action(
+    cookie_jar: CookieJar,
+    State(mut state): State<AppState>,
+    Form(form): Form<LoginForm>,
+) -> Result<(CookieJar, Redirect), AppError> {
+    if let Ok(user_data) = state.store.read_user_data(&form.name).await {
+        if form.password == user_data.password {
+            // セッションを作成する
+            let session_id = Uuid::new_v4().to_string();
+            let session_data = SessionData {
+                user_name: user_data.name,
+            };
+            state
+                .store
+                .write_session_data(&session_id, &session_data)
+                .await?;
+            // リダイレクト先の URL を取得して、リダイレクトする
+            let redirect_uri = String::from_utf8(
+                URL_SAFE_NO_PAD
+                    .decode(form.redirect)
+                    .map_err(|_| AppError::InValidParameter)?,
+            )
+            .map_err(|_| AppError::InValidParameter)?;
+            return Ok((
+                cookie_jar.add(Cookie::new("session", session_id)),
+                Redirect::to(&redirect_uri),
+            ));
+        }
+    }
+
+    return Err(AppError::Unauthorized(
+        "Invalid username or password".into(),
+    ));
 }

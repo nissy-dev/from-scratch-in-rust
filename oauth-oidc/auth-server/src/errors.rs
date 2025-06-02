@@ -10,6 +10,7 @@ pub enum AppError {
     JsonError(serde_json::Error),
     JwtEncodeError(String),
     JwkCreateError(String),
+    Unauthorized(String),
     InValidParameter,
     InValidHeader,
 }
@@ -21,6 +22,7 @@ impl fmt::Display for AppError {
             Self::JsonError(e) => write!(f, "JSON serialization error: {}", e),
             Self::JwtEncodeError(e) => write!(f, "JWT encoding error: {}", e),
             Self::JwkCreateError(e) => write!(f, "JWK creation error: {}", e),
+            Self::Unauthorized(e) => write!(f, "Unauthorized error: {}", e),
             Self::InValidParameter => write!(f, "Invalid parameter"),
             Self::InValidHeader => write!(f, "Invalid header"),
         }
@@ -48,6 +50,7 @@ impl IntoResponse for AppError {
             Self::JsonError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Serialization error"),
             Self::JwtEncodeError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "JWT encoding error"),
             Self::JwkCreateError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "JWK creation error"),
+            Self::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "Unauthorized access"),
             Self::InValidParameter => (StatusCode::BAD_REQUEST, "Invalid parameter"),
             Self::InValidHeader => (StatusCode::BAD_REQUEST, "Invalid header"),
         };

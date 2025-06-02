@@ -29,6 +29,19 @@ pub struct TokenData {
     pub active: bool,
 }
 
+#[derive(Deserialize, Serialize, Debug)]
+pub struct SessionData {
+    pub user_name: String,
+}
+
+// 本当は user_id を設定したり、Password のハッシュ化とかも必要だけど、
+// 今回は簡略化のために省略する
+#[derive(Deserialize, Serialize, Debug)]
+pub struct UserData {
+    pub name: String,
+    pub password: String,
+}
+
 pub struct Store {
     client: Arc<redis::Client>,
 }
@@ -37,6 +50,8 @@ impl Store {
     pub const CLIENT: &'static str = "oauth2:client";
     pub const AUTH_CODE: &'static str = "oauth2:code";
     pub const TOKEN: &'static str = "oauth2:token";
+    pub const SESSION: &'static str = "oauth2:session";
+    pub const USER: &'static str = "oauth2:user";
 
     pub fn new(client: redis::Client) -> Self {
         Self {
@@ -81,6 +96,25 @@ impl Store {
 
     pub async fn read_token_data(&mut self, token: &str) -> Result<TokenData, AppError> {
         self.read(Self::TOKEN, token).await
+    }
+
+    pub async fn write_session_data(
+        &mut self,
+        session_id: &str,
+        data: &SessionData,
+    ) -> Result<(), AppError> {
+        self.write(Self::SESSION, session_id, data, None).await
+    }
+
+    pub async fn read_session_data(&mut self, session_id: &str) -> Result<SessionData, AppError> {
+        self.read(Self::SESSION, session_id).await
+    }
+
+    pub async fn write_user_data(&mut self, data: &UserData) -> Result<(), AppError> {
+        self.write(Self::USER, &data.name, data, None).await
+    }
+    pub async fn read_user_data(&mut self, name: &str) -> Result<UserData, AppError> {
+        self.read(Self::USER, name).await
     }
 
     async fn write<T: Serialize>(
