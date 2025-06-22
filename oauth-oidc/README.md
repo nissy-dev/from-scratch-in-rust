@@ -11,26 +11,6 @@
 2. **認証サーバー (Auth Server)**：認証・認可を担当
 3. **リソースサーバー (Resource Server)**：保護されたリソースを提供
 
-### アーキテクチャ図
-
-```mermaid
-graph TD
-    Client["Client<br/>(localhost:5173)"]
-    AuthServer["Auth Server<br/>(localhost:3123)"]
-    ResourceServer["Resource Server<br/>(localhost:6244)"]
-    
-    Client -->|1. 認可リクエスト| AuthServer
-    AuthServer -->|2a. ログイン要求<br/>(未認証の場合)| Client
-    Client -->|2b. ログイン情報送信| AuthServer
-    AuthServer -->|3. 認可コード| Client
-    Client -->|4. トークンリクエスト<br/>(code + code_verifier)| AuthServer
-    AuthServer -->|5. アクセストークン<br/>(+ IDトークン)| Client
-    Client -->|6. アクセストークンを<br/>使ったリソース要求| ResourceServer
-    ResourceServer -->|7. トークン検証要求<br/>(JWKSやイントロスペクション)| AuthServer
-    AuthServer -->|8. 検証結果| ResourceServer
-    ResourceServer -->|9. 保護されたリソース| Client
-```
-
 ### 実装されているフローの説明
 
 #### 1. ログイン認証フロー
@@ -104,8 +84,6 @@ graph TD
 - **状態パラメータ (state)**：CSRF攻撃の防止
 - **JWT署名検証**：RS256アルゴリズムを使用した非対称鍵暗号による署名と検証
 - **Nonceパラメータ**：リプレイ攻撃の防止
-
-## ドキュメント
 
 ### 詳細なシーケンス図
 
