@@ -21,6 +21,7 @@ pub struct AuthorizeCodeData {
     pub code_challenge: String,
     pub code_challenge_method: String,
     pub scope: Option<String>,
+    pub nonce: Option<String>,
 }
 
 // introspect の処理で利用する
@@ -32,12 +33,14 @@ pub struct TokenData {
 #[derive(Deserialize, Serialize, Debug)]
 pub struct SessionData {
     pub user_name: String,
+    pub user_id: String,
 }
 
 // 本当は user_id を設定したり、Password のハッシュ化とかも必要だけど、
 // 今回は簡略化のために省略する
 #[derive(Deserialize, Serialize, Debug)]
 pub struct UserData {
+    pub id: String,
     pub name: String,
     pub password: String,
 }
@@ -113,6 +116,7 @@ impl Store {
     pub async fn write_user_data(&mut self, data: &UserData) -> Result<(), AppError> {
         self.write(Self::USER, &data.name, data, None).await
     }
+
     pub async fn read_user_data(&mut self, name: &str) -> Result<UserData, AppError> {
         self.read(Self::USER, name).await
     }

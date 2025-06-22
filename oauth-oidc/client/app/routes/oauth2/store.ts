@@ -6,7 +6,9 @@ type StoreKey =
   | "oauth2:client_secret"
   | "oauth2:redirect_uri"
   | "oauth2:code_verifier"
-  | "oauth2:access_token";
+  | "oauth2:access_token"
+  | "openid:nonce"
+  | "openid:id_token";
 
 type Store = {
   data: Record<string, string>;

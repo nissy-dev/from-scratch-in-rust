@@ -8,36 +8,38 @@ import {
   resourceServerUrl,
 } from "~/utils";
 import { useStore } from "./store";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 
 // 通常は認可の許可画面を表示する前に認証を行うことが多い
 export default function OAuth2() {
-  const [resource, setResource] = useState<string | null>(null);
-
   const setItem = useStore((s) => s.setItem);
   const reset = useStore((s) => s.reset);
 
   const clientId = useStore((s) => s.getItem("oauth2:client_id"));
   const redirectUri = useStore((s) => s.getItem("oauth2:redirect_uri"));
   const accessToken = useStore((s) => s.getItem("oauth2:access_token"));
+  const idToken = useStore((s) => s.getItem("openid:id_token"));
 
   const onClickAuthButton = async () => {
     const codeVerifier = generateCodeVerifier();
     const state = codeVerifier; // CSRF 用のランダム文字列、今回は code_verifier をそのまま使用
     const codeChallenge = await generateCodeChallenge(codeVerifier);
+    const nonce = crypto.randomUUID();
 
     // token エンドポイントで必要な値は session storage に保存しておく
     setItem("oauth2:code_verifier", codeVerifier);
     setItem("oauth2:state", state);
+    setItem("openid:nonce", nonce);
 
     const searchParams = new URLSearchParams({
       response_type: "code",
       client_id: clientId!,
       redirect_uri: redirectUri!,
-      scope: "read",
+      scope: "openid",
       state: state,
       code_challenge: codeChallenge,
       code_challenge_method: "S256",
+      nonce,
     });
     // 認可エンドポイントへリダイレクト
     window.location.href = `${authServerUrl}/authorize?${searchParams.toString()}`;
@@ -71,6 +73,7 @@ export default function OAuth2() {
       {accessToken && (
         <>
           <p>アクセストークン: {accessToken}</p>
+          <p>ID token: {idToken}</p>
           <button onClick={onClickGetResourceButton}>リソースを取得</button>
           <button onClick={() => reset()}>リセット</button>
         </>

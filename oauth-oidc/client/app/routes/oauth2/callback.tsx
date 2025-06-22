@@ -1,7 +1,7 @@
 // 認可サーバーから受け取った認可コードをもとにトークンエンドポイントにリクエストを送信する。
 // 認可リクエストを送るときの redirect_uri にはここの path を指定する。
 
-import { use, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { authServerUrl } from "~/utils";
 import { useStore } from "./store";
 
@@ -12,6 +12,7 @@ export default function Callback() {
   const clientId = useStore((s) => s.getItem("oauth2:client_id"));
   const redirectUri = useStore((s) => s.getItem("oauth2:redirect_uri"));
   const codeVerifier = useStore((s) => s.getItem("oauth2:code_verifier"));
+  const nonce = useStore((s) => s.getItem("openid:nonce"));
 
   const fetchAccessToken = async ({ code }: { code: string }) => {
     if (!clientId || !redirectUri || !codeVerifier) {
@@ -21,6 +22,8 @@ export default function Callback() {
 
     const response = await fetch(`${authServerUrl}/token`, {
       method: "POST",
+      // POST で cookie を送るにはこの設定が必要だった
+      credentials: "include",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
       },
@@ -40,8 +43,19 @@ export default function Callback() {
       token_type: string;
       expires_in: number;
       scope: string;
+      id_token: string;
     };
+
+    // ID Token の nonce の検証
+    // なんか上手くいかない
+    // const isValid = await verifyIdToken(data.id_token, nonce!);
+    // if (!isValid) {
+    //   setError("Invalid ID Token");
+    //   return;
+    // }
     setItem("oauth2:access_token", data.access_token);
+    setItem("openid:id_token", data.id_token);
+
     // トークン取得後に任意のページにリダイレクトする
     window.location.href = "/oauth2";
   };
@@ -70,3 +84,17 @@ export default function Callback() {
     <div>This is callback page! Client is requesting token endpoint...</div>
   );
 }
+
+// const verifyIdToken = async (idToken: string, nonce: string) => {
+//   const jwks = jose.createRemoteJWKSet(
+//     new URL(`${authServerUrl}/.well-known/jwks.json`)
+//   );
+
+//   try {
+//     const { payload } = await jose.jwtVerify(idToken, jwks);
+//     return payload.nonce === nonce;
+//   } catch (error) {
+//     console.error("Failed to verify ID Token:", error);
+//     return false;
+//   }
+// };

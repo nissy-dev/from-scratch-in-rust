@@ -39,6 +39,11 @@ pub struct Claims {
     pub jti: String,
     // JWT のスコープ
     pub scope: Option<String>,
+    // 以下は id token のための拡張
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 impl Claims {
@@ -54,6 +59,31 @@ impl Claims {
             iat: now,
             jti: uuid::Uuid::new_v4().to_string(),
             scope,
+            nonce: None,
+            name: None,
+        }
+    }
+
+    pub fn new_id_token(
+        iss: String,
+        aud: String,
+        sub: String,
+        scope: Option<String>,
+        nonce: Option<String>,
+        name: Option<String>,
+    ) -> Self {
+        let iat = chrono::Utc::now().timestamp();
+        let exp = iat + 3600; // 1時間後に有効期限を設定
+        Claims {
+            iss,
+            sub,
+            aud,
+            exp,
+            iat,
+            jti: uuid::Uuid::new_v4().to_string(),
+            scope,
+            nonce,
+            name,
         }
     }
 }

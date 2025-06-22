@@ -43,6 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 初期ユーザを登録しておく
     store
         .write_user_data(&UserData {
+            id: uuid::Uuid::new_v4().to_string(),
             name: "sample".to_string(),
             password: "sample".to_string(),
         })
@@ -54,10 +55,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/clients", post(handlers::create_client))
         .route("/introspect", post(handlers::introspect))
         .route("/.well-known/jwks.json", get(handlers::jwks))
-        .route(
-            "/.well-known/openid-configuration",
-            get(handlers::openid_configuration),
-        )
         .route("/login", get(handlers::login_form))
         .route("/login", post(handlers::login_action))
         .with_state(state)

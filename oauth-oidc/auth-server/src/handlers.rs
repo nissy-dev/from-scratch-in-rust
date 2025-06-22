@@ -26,6 +26,7 @@ pub struct AuthorizeQuery {
     code_challenge: String,
     code_challenge_method: String,
     scope: Option<String>,
+    nonce: Option<String>,
 }
 
 pub async fn authorize(
@@ -33,7 +34,7 @@ pub async fn authorize(
     State(mut state): State<AppState>,
     cookie_jar: CookieJar,
     request: Request,
-) -> Result<(CookieJar, Redirect), AppError> {
+) -> Result<Redirect, AppError> {
     // ユーザーがログインしているか確認する
     if !is_login(&mut state, &cookie_jar).await {
         // ログイン後、再度認可エンドポイントへリダイレクトするために URL の情報をクエリパラメータで渡す
@@ -44,7 +45,7 @@ pub async fn authorize(
         let encoded_uri = URL_SAFE_NO_PAD.encode(uri.as_str().as_bytes());
         let redirect_uri = format!("/login?redirect={}", encoded_uri);
         // ログインしていない場合は、ログインページにリダイレクトする
-        return Ok((cookie_jar, Redirect::to(&redirect_uri)));
+        return Ok(Redirect::to(&redirect_uri));
     }
 
     // response_type が code であることを確認する
@@ -75,6 +76,7 @@ pub async fn authorize(
         code_challenge: query.code_challenge.clone(),
         code_challenge_method: query.code_challenge_method.clone(),
         scope: query.scope.clone(),
+        nonce: query.nonce.clone(),
     };
     state
         .store
@@ -85,10 +87,7 @@ pub async fn authorize(
         "{}?code={}&state={}",
         query.redirect_uri, &auth_code, query.state
     );
-    Ok((
-        cookie_jar.remove(Cookie::from("session")),
-        Redirect::to(&redirect_uri),
-    ))
+    Ok(Redirect::to(&redirect_uri))
 }
 
 async fn is_login(state: &mut AppState, cookie_jar: &CookieJar) -> bool {
@@ -124,16 +123,23 @@ pub struct TokenResponse {
     token_type: String,
     expires_in: i64,
     scope: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id_token: Option<String>,
 }
 
 pub async fn token(
     headers: HeaderMap,
+    cookie_jar: CookieJar,
     State(mut state): State<AppState>,
     Form(params): Form<TokenForm>,
-) -> Result<Json<TokenResponse>, AppError> {
+) -> Result<(CookieJar, Json<TokenResponse>), AppError> {
     match params.grant_type.as_str() {
-        "authorization_code" => handle_authorization_code_flow(&mut state, &params).await,
-        "client_credentials" => handle_client_credentials_flow(&mut state, &params, &headers).await,
+        "authorization_code" => {
+            handle_authorization_code_flow(&mut state, &params, &cookie_jar).await
+        }
+        "client_credentials" => {
+            handle_client_credentials_flow(&mut state, &params, &headers, &cookie_jar).await
+        }
         _ => Err(AppError::InValidParameter),
     }
 }
@@ -141,7 +147,8 @@ pub async fn token(
 async fn handle_authorization_code_flow(
     state: &mut AppState,
     params: &TokenForm,
-) -> Result<Json<TokenResponse>, AppError> {
+    cookie_jar: &CookieJar,
+) -> Result<(CookieJar, Json<TokenResponse>), AppError> {
     let code = params.code.as_ref().ok_or(AppError::InValidParameter)?;
     let code_verifier = params
         .code_verifier
@@ -154,6 +161,13 @@ async fn handle_authorization_code_flow(
 
     // 認可コードから redis に保存していたデータを取得
     let auth_code_data = state.store.read_auth_code_data(code).await?;
+
+    // cookie から user を取得
+    let session_id = match cookie_jar.get("session") {
+        Some(cookie) => cookie.value(),
+        None => return Err(AppError::InValidParameter),
+    };
+    let session_data = state.store.read_session_data(session_id).await?;
 
     // 取得した redirect_uri と リクエストから来る redirect_uri が一致するか確認する
     if &auth_code_data.redirect_uri != redirect_uri {
@@ -174,7 +188,7 @@ async fn handle_authorization_code_flow(
         // resource server の URL
         "http://localhost:6244".to_string(),
         // authorization_code_flow の場合はユーザ認証して、ユーザー ID を使う場合が多い
-        uuid::Uuid::new_v4().to_string(),
+        session_data.user_id.clone(),
         scope.cloned(),
     );
     let jwt = encode_jwt_rs256(&claims, &state.key_id, &state.private_key)
@@ -188,19 +202,40 @@ async fn handle_authorization_code_flow(
         .write_token_data(&jwt, &token_data, expires_in as u64)
         .await?;
 
-    Ok(Json(TokenResponse {
-        access_token: jwt,
-        token_type: "Bearer".into(),
-        expires_in,
-        scope: scope.cloned(),
-    }))
+    let mut id_token = None;
+    if scope.map_or(false, |s| s.contains("openid")) {
+        let id_token_claims = Claims::new_id_token(
+            "http://localhost:3123".to_string(),
+            auth_code_data.client_id.clone(),
+            session_data.user_id.clone(),
+            None, // scope は id_token には含めない
+            auth_code_data.nonce.clone(),
+            Some(session_data.user_name.clone()),
+        );
+        id_token = Some(
+            encode_jwt_rs256(&id_token_claims, &state.key_id, &state.private_key)
+                .map_err(|e| AppError::JwtEncodeError(e.to_string()))?,
+        );
+    }
+
+    Ok((
+        cookie_jar.clone().remove(Cookie::from("session")),
+        Json(TokenResponse {
+            access_token: jwt,
+            token_type: "Bearer".into(),
+            expires_in,
+            scope: scope.cloned(),
+            id_token,
+        }),
+    ))
 }
 
 async fn handle_client_credentials_flow(
     state: &mut AppState,
     params: &TokenForm,
     headers: &HeaderMap,
-) -> Result<Json<TokenResponse>, AppError> {
+    cookie_jar: &CookieJar,
+) -> Result<(CookieJar, Json<TokenResponse>), AppError> {
     let scope = params.scope.as_ref();
 
     // Basic ヘッダーから client_id と client_secret を取得する
@@ -222,12 +257,16 @@ async fn handle_client_credentials_flow(
     let jwt = encode_jwt_rs256(&claims, &state.key_id, &state.private_key)
         .map_err(|e| AppError::JwtEncodeError(e.to_string()))?;
 
-    Ok(Json(TokenResponse {
-        access_token: jwt,
-        token_type: "Bearer".into(),
-        expires_in: claims.exp - claims.iat,
-        scope: scope.cloned(),
-    }))
+    Ok((
+        cookie_jar.clone().remove(Cookie::from("session")),
+        Json(TokenResponse {
+            access_token: jwt,
+            token_type: "Bearer".into(),
+            expires_in: claims.exp - claims.iat,
+            scope: scope.cloned(),
+            id_token: None,
+        }),
+    ))
 }
 
 fn parse_basic_auth(headers: &HeaderMap) -> Result<(String, String), AppError> {
@@ -323,33 +362,6 @@ pub async fn jwks(State(state): State<AppState>) -> Result<Json<JwksResponse>, A
     Ok(Json(JwksResponse { keys: vec![jwk] }))
 }
 
-#[derive(Serialize)]
-pub struct OpenIDConfigurationResponse {
-    issuer: String,
-    authorization_endpoint: String,
-    token_endpoint: String,
-    jwks_uri: String,
-    response_types_supported: Vec<String>,
-    subject_types_supported: Vec<String>,
-    id_token_signing_alg_values_supported: Vec<String>,
-    scopes_supported: Vec<String>,
-    claims_supported: Vec<String>,
-}
-
-pub async fn openid_configuration() -> Result<Json<OpenIDConfigurationResponse>, AppError> {
-    Ok(Json(OpenIDConfigurationResponse {
-        issuer: "http://localhost:3123".into(),
-        authorization_endpoint: "http://localhost:3123/authorize".into(),
-        token_endpoint: "http://localhost:3123/token".into(),
-        jwks_uri: "http://localhost:3123/jwks".into(),
-        response_types_supported: vec!["code".into()],
-        subject_types_supported: vec!["public".into()],
-        id_token_signing_alg_values_supported: vec!["RS256".into()],
-        scopes_supported: vec!["openid".into(), "email".into(), "profile".into()],
-        claims_supported: vec!["sub".into(), "email".into(), "name".into()],
-    }))
-}
-
 #[derive(Deserialize)]
 pub struct LoginFormQuery {
     redirect: Option<String>,
@@ -394,6 +406,7 @@ pub async fn login_action(
             let session_id = Uuid::new_v4().to_string();
             let session_data = SessionData {
                 user_name: user_data.name,
+                user_id: user_data.id,
             };
             state
                 .store
