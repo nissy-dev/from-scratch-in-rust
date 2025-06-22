@@ -4,6 +4,8 @@ use axum::{
 };
 use std::fmt;
 
+// 今回は適当にエラーを返しているが、実際に返すべきエラーは RFC に定義されているので、それに従うべき
+// https://openid.net/specs/openid-connect-core-1_0.html#AuthError
 #[derive(Debug)]
 pub enum AppError {
     RedisError(redis::RedisError),

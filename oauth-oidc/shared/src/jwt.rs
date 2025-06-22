@@ -14,7 +14,6 @@ use rsa::{
     RsaPrivateKey, RsaPublicKey,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 #[derive(Serialize, Deserialize)]
 struct JwtHeader {
@@ -105,14 +104,11 @@ pub fn encode_jwt_rs256(
     let payload_enc = URL_SAFE_NO_PAD.encode(payload_json);
     let signing_input = format!("{}.{}", header_enc, payload_enc);
 
-    // 署名対象のデータをハッシュ化
-    let hashed = Sha256::digest(signing_input.as_bytes());
-
     // 秘密鍵で署名
     let private_key = RsaPrivateKey::from_pkcs8_pem(private_pem)?;
     let signing_key = pkcs1v15::SigningKey::<sha2::Sha256>::new(private_key);
     let mut rng = rand::thread_rng(); // rand@v8 しか使えない
-    let signature = signing_key.sign_with_rng(&mut rng, &hashed);
+    let signature = signing_key.sign_with_rng(&mut rng, signing_input.as_bytes());
 
     // 署名をエンコード
     let signature_enc = URL_SAFE_NO_PAD.encode(signature.to_bytes());
@@ -141,10 +137,9 @@ pub fn decode_jwt_rs256(
     let public_key = RsaPublicKey::from_public_key_pem(public_key_pem)?;
     let verifying_key = pkcs1v15::VerifyingKey::<sha2::Sha256>::new(public_key);
 
-    let hashed = Sha256::digest(signing_input.as_bytes());
     let signature = URL_SAFE_NO_PAD.decode(signature_enc)?;
     let signature = pkcs1v15::Signature::try_from(signature.as_slice())?;
-    verifying_key.verify(&hashed, &signature)?;
+    verifying_key.verify(&signing_input.as_bytes(), &signature)?;
 
     let payload_json = String::from_utf8(URL_SAFE_NO_PAD.decode(payload_enc)?)?;
     let claims: Claims = serde_json::from_str(&payload_json)?;

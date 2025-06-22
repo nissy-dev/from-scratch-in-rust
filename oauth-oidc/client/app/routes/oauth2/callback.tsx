@@ -1,6 +1,7 @@
 // 認可サーバーから受け取った認可コードをもとにトークンエンドポイントにリクエストを送信する。
 // 認可リクエストを送るときの redirect_uri にはここの path を指定する。
 
+import * as jose from "jose";
 import { useEffect, useState } from "react";
 import { authServerUrl } from "~/utils";
 import { useStore } from "./store";
@@ -47,12 +48,11 @@ export default function Callback() {
     };
 
     // ID Token の nonce の検証
-    // なんか上手くいかない
-    // const isValid = await verifyIdToken(data.id_token, nonce!);
-    // if (!isValid) {
-    //   setError("Invalid ID Token");
-    //   return;
-    // }
+    const isValid = await verifyIdToken(data.id_token, nonce!);
+    if (!isValid) {
+      setError("Invalid ID Token");
+      return;
+    }
     setItem("oauth2:access_token", data.access_token);
     setItem("openid:id_token", data.id_token);
 
@@ -85,16 +85,16 @@ export default function Callback() {
   );
 }
 
-// const verifyIdToken = async (idToken: string, nonce: string) => {
-//   const jwks = jose.createRemoteJWKSet(
-//     new URL(`${authServerUrl}/.well-known/jwks.json`)
-//   );
+const verifyIdToken = async (idToken: string, nonce: string) => {
+  const jwks = jose.createRemoteJWKSet(
+    new URL(`${authServerUrl}/.well-known/jwks.json`)
+  );
 
-//   try {
-//     const { payload } = await jose.jwtVerify(idToken, jwks);
-//     return payload.nonce === nonce;
-//   } catch (error) {
-//     console.error("Failed to verify ID Token:", error);
-//     return false;
-//   }
-// };
+  try {
+    const { payload } = await jose.jwtVerify(idToken, jwks);
+    return payload.nonce === nonce;
+  } catch (error) {
+    console.error("Failed to verify ID Token:", error);
+    return false;
+  }
+};
