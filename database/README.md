@@ -1,3 +1,3 @@
-# Build Your Own Database From Scratch in Go
+# Let's Build a Simple Database
 
-https://build-your-own.org/database/
+https://cstack.github.io/db_tutorial/
