@@ -1,31 +1,32 @@
+mod backend;
 mod frontend;
+mod schema;
 
 use std::io::Write;
 
+use anyhow::{Error, Result};
+
 use crate::frontend::{InputBuffer, MetaCommand, Statement};
 
-fn main() {
+fn main() -> Result<(), Error> {
     let mut input = InputBuffer::new();
+    // 複数テーブルサポートはしない
+    let mut table = backend::Table::new();
     loop {
         print!("db > ");
         std::io::stdout().flush().unwrap();
-
-        input.read_input();
+        input.read_input()?;
 
         if input.is_meta_command() {
             let command = MetaCommand::new(&input.buffer);
-            command.execute();
+            command.execute()?;
             continue;
         }
 
         let statement = Statement::new(&input.buffer);
-
-        // if input.is_meta_command() {
-        //     if input.buffer == ".exit" {
-        //         break;
-        //     } else {
-        //         println!("Unrecognized command '{}'.", input.buffer);
-        //     }
-        // }
+        if let Err(err) = statement.execute(&mut table) {
+            println!("Error executing statement: {}", err);
+            table.reset();
+        }
     }
 }
