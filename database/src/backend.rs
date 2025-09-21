@@ -51,16 +51,17 @@ impl Table {
 
     pub fn set_row(&mut self, row: &[&str]) -> Result<(), Error> {
         if !self.schema.validate_row(row) {
-            return Err(Error::msg("failed to validate row"));
+            return Err(Error::msg("Failed to validate row"));
         }
         let serialized_row = self.schema.serialize_row(row)?;
         if self.pages.is_empty() {
             self.pages.push(Page::new());
         }
         let current_page = self.pages.last_mut().unwrap();
-        if current_page.len() + serialized_row.len() > current_page.capacity()
-            && self.pages.len() <= self.pages.capacity()
-        {
+        if current_page.len() + serialized_row.len() > current_page.capacity() {
+            if self.pages.len() >= TABLE_MAX_PAGES {
+                return Err(Error::msg("Table is full"));
+            }
             self.pages.push(Page::new());
         }
         self.pages.last_mut().unwrap().insert(serialized_row)?;
@@ -84,6 +85,6 @@ impl Table {
     pub fn reset(&mut self) {
         self.schema = Schema::new();
         self.pages.clear();
-        println!("table reset.");
+        // println!("Table reset.");
     }
 }
