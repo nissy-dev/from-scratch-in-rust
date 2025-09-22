@@ -78,7 +78,7 @@ impl<'a> Statement<'a> {
             // select
             // ex) select
             Some("select") => {
-                let rows = table.get_rows()?;
+                let rows = table.get_all_rows()?;
                 for (i, row) in rows.iter().enumerate() {
                     println!("row {}: ({})", i, row.join(", "));
                 }

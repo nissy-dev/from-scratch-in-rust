@@ -1,46 +1,127 @@
+use std::{
+    fs::{File, OpenOptions},
+    io::{BufReader, Read, Seek, SeekFrom},
+};
+
 use anyhow::{Error, Ok, Result};
 
 use crate::schema::{Column, Schema};
 
 const PAGE_SIZE: usize = 4096;
-const TABLE_MAX_PAGES: usize = 100;
+const MAX_PAGES: usize = 100;
 
+pub struct Cursor {
+    row_num: usize,
+    page_num: usize,
+}
+
+impl Cursor {
+    pub fn new() -> Self {
+        Cursor {
+            row_num: 0,
+            page_num: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct Page {
-    data: Vec<u8>,
+    data: [u8; PAGE_SIZE],
+    offset: usize,
 }
 
 impl Page {
     pub fn new() -> Self {
         Page {
-            data: Vec::with_capacity(PAGE_SIZE),
+            data: [0; PAGE_SIZE],
+            offset: 0,
         }
     }
 
     pub fn insert(&mut self, data: Vec<u8>) -> Result<(), Error> {
-        self.data.extend(data);
+        if self.offset + data.len() > PAGE_SIZE {
+            return Err(Error::msg("Page is full"));
+        }
+        self.data[self.offset..self.offset + data.len()].copy_from_slice(&data);
+        self.offset += data.len();
         Ok(())
     }
 
     pub fn len(&self) -> usize {
-        self.data.len()
+        self.offset
+    }
+}
+
+pub struct Pager {
+    file: File,
+    pages: [Option<Box<Page>>; MAX_PAGES],
+}
+
+const PAGE_DEFAULT_VALUE: Option<Box<Page>> = None;
+
+impl Pager {
+    pub fn new(file_path: &str) -> Result<Self, Error> {
+        Ok(Pager {
+            file: OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .open(file_path)?,
+            pages: [PAGE_DEFAULT_VALUE; MAX_PAGES],
+        })
     }
 
-    pub fn capacity(&self) -> usize {
-        self.data.capacity()
+    pub fn get_page(&mut self, page_num: usize) -> Result<&mut Page, Error> {
+        if page_num + 1 >= MAX_PAGES {
+            return Err(Error::msg("Table is full"));
+        }
+        // page が None の場合
+        if self.pages[page_num].is_none() {
+            let mut page = Page::new();
+            if self.file.metadata()?.len() >= ((page_num + 1) * PAGE_SIZE) as u64 {
+                // 該当の page がファイルに存在する場合は読み込む。
+                let mut buffer = [0; PAGE_SIZE];
+                let mut reader = BufReader::new(&self.file);
+                reader.seek(SeekFrom::Start((page_num * PAGE_SIZE) as u64))?;
+                reader.read_exact(&mut buffer)?;
+                page.insert(buffer.to_vec())?;
+            }
+            self.pages[page_num] = Some(Box::new(page));
+        }
+        self.pages[page_num]
+            .as_deref_mut()
+            .ok_or_else(|| Error::msg("page not found"))
+    }
+
+    pub fn insert_data_topage(&mut self, page_num: usize, data: Vec<u8>) -> Result<(), Error> {
+        if let Some(page) = &mut self.pages[page_num] {
+            page.insert(data)?;
+            Ok(())
+        } else {
+            Err(Error::msg("page not found"))
+        }
+    }
+
+    pub fn clear(&mut self) -> Result<(), Error> {
+        self.file.set_len(0)?;
+        self.pages = [PAGE_DEFAULT_VALUE; MAX_PAGES];
+        Ok(())
     }
 }
 
 pub struct Table {
     schema: Schema,
-    pages: Vec<Page>,
+    pager: Pager,
+    cursor: Cursor,
 }
 
 impl Table {
-    pub fn new() -> Self {
-        Table {
+    pub fn new(file_path: &str) -> Result<Self, Error> {
+        Ok(Table {
             schema: Schema::new(),
-            pages: Vec::with_capacity(TABLE_MAX_PAGES),
-        }
+            pager: Pager::new(file_path)?,
+            cursor: Cursor::new(),
+        })
     }
 
     pub fn set_columns(&mut self, columns: Vec<Column>) {
@@ -54,24 +135,23 @@ impl Table {
             return Err(Error::msg("Failed to validate row"));
         }
         let serialized_row = self.schema.serialize_row(row)?;
-        if self.pages.is_empty() {
-            self.pages.push(Page::new());
+        let max_row_num = PAGE_SIZE / self.schema.row_size();
+        if self.cursor.row_num >= max_row_num {
+            // page の空きがない場合は次のページへ
+            self.cursor.page_num += 1;
+            self.cursor.row_num = 0;
         }
-        let current_page = self.pages.last_mut().unwrap();
-        if current_page.len() + serialized_row.len() > current_page.capacity() {
-            if self.pages.len() >= TABLE_MAX_PAGES {
-                return Err(Error::msg("Table is full"));
-            }
-            self.pages.push(Page::new());
-        }
-        self.pages.last_mut().unwrap().insert(serialized_row)?;
+        let page = self.pager.get_page(self.cursor.page_num)?;
+        page.insert(serialized_row)?;
+        self.cursor.row_num += 1;
         Ok(())
     }
 
-    pub fn get_rows(&self) -> Result<Vec<Vec<String>>, Error> {
+    pub fn get_all_rows(&mut self) -> Result<Vec<Vec<String>>, Error> {
         let mut rows = Vec::new();
         let row_size = self.schema.row_size();
-        for page in &self.pages {
+        for i in 0..(self.cursor.page_num + 1) {
+            let page = self.pager.get_page(i)?;
             let mut offset = 0;
             while offset < page.len() {
                 let row_data = &page.data[offset..offset + row_size];
@@ -82,9 +162,10 @@ impl Table {
         Ok(rows)
     }
 
-    pub fn reset(&mut self) {
+    pub fn reset(&mut self) -> Result<(), Error> {
         self.schema = Schema::new();
-        self.pages.clear();
-        // println!("Table reset.");
+        self.pager.clear()?;
+        self.cursor = Cursor::new();
+        Ok(())
     }
 }
