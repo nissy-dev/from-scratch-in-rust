@@ -36,9 +36,10 @@ impl<'a> MetaCommand<'a> {
         MetaCommand { command }
     }
 
-    pub fn execute(&self) -> Result<(), Error> {
+    pub fn execute(&self, table: &mut Table) -> Result<(), Error> {
         match self.command {
             ".exit" => {
+                table.save()?;
                 std::process::exit(0);
             }
             _ => {
@@ -67,7 +68,7 @@ impl<'a> Statement<'a> {
                 while let Some(column) = tokens.next() {
                     columns.push(column.try_into()?);
                 }
-                table.set_columns(columns);
+                table.set_columns(columns)?;
             }
             // insert <value> ...
             // ex) insert 1 hello world

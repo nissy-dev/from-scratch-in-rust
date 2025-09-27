@@ -1,10 +1,13 @@
 use anyhow::{Error, Ok, Result};
 
+const COLUMN_INTEGER: u8 = 1;
+const COLUMN_TEXT: u8 = 2;
+
 // 'int' or 'text(size)'
 #[derive(Debug, Clone)]
 pub enum Column {
-    Integer, // 32bit
-    Text(usize),
+    Integer,  // 32bit
+    Text(u8), // size は最大で 255
 }
 
 impl TryFrom<&str> for Column {
@@ -29,18 +32,18 @@ impl Column {
     pub fn size(&self) -> usize {
         match self {
             Column::Integer => 4,
-            Column::Text(size) => *size,
+            Column::Text(size) => *size as usize,
         }
     }
 
     pub fn validate(&self, value: &str) -> bool {
         match self {
             Column::Integer => value.parse::<i32>().is_ok(),
-            Column::Text(size) => value.len() <= *size,
+            Column::Text(size) => value.len() <= *size as usize,
         }
     }
 
-    pub fn serialize(&self, value: &str) -> Result<Vec<u8>, Error> {
+    pub fn serialize_row(&self, value: &str) -> Result<Vec<u8>, Error> {
         match self {
             Column::Integer => {
                 let int_value = value
@@ -49,7 +52,7 @@ impl Column {
                 Ok(int_value.to_le_bytes().to_vec())
             }
             Column::Text(size) => {
-                let mut bytes = vec![0; *size];
+                let mut bytes = vec![0; *size as usize];
                 let value_bytes = value.as_bytes();
                 bytes[..value_bytes.len()].copy_from_slice(&value_bytes);
                 Ok(bytes)
@@ -57,7 +60,7 @@ impl Column {
         }
     }
 
-    pub fn deserialize(&self, data: &[u8]) -> Result<String, Error> {
+    pub fn deserialize_row(&self, data: &[u8]) -> Result<String, Error> {
         match self {
             Column::Integer => {
                 if data.len() != 4 {
@@ -68,7 +71,7 @@ impl Column {
                 Ok(int_value.to_string())
             }
             Column::Text(size) => {
-                if data.len() != *size {
+                if data.len() != *size as usize {
                     return Err(Error::msg("Invalid data length for text"));
                 }
                 let text_value = String::from_utf8(data.to_vec())
@@ -92,6 +95,10 @@ impl Schema {
         }
     }
 
+    pub fn is_defined(&self) -> bool {
+        !self.columns.is_empty()
+    }
+
     pub fn add_column(&mut self, column: Column) {
         self.columns.push(column);
     }
@@ -109,10 +116,45 @@ impl Schema {
         true
     }
 
+    // スキーマの行定義をバイナリ形式でシリアライズする
+    // int -> COLUMN_INTEGER
+    // text(size) -> [COLUMN_TEXT, size]
+    pub fn serialize_columns(&self) -> Vec<u8> {
+        let mut serialized = Vec::new();
+        for col in &self.columns {
+            match col {
+                Column::Integer => serialized.push(COLUMN_INTEGER),
+                Column::Text(size) => serialized.extend_from_slice(&[COLUMN_TEXT, *size as u8]),
+            }
+        }
+        serialized
+    }
+
+    pub fn deserialize_columns(&mut self, data: &[u8]) -> Result<(), Error> {
+        let mut idx = 0;
+        while idx < data.len() {
+            match data[idx] {
+                COLUMN_INTEGER => {
+                    self.columns.push(Column::Integer);
+                    idx += 1;
+                }
+                COLUMN_TEXT => {
+                    let size = data[idx + 1];
+                    self.columns.push(Column::Text(size));
+                    idx += 2;
+                }
+                _ => {
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn serialize_row(&self, row: &[&str]) -> Result<Vec<u8>, Error> {
         let mut serialized = Vec::new();
         for (col, value) in self.columns.iter().zip(row.iter()) {
-            serialized.extend(col.serialize(value)?);
+            serialized.extend(col.serialize_row(value)?);
         }
         Ok(serialized)
     }
@@ -122,7 +164,7 @@ impl Schema {
         let mut row = Vec::new();
         for col in &self.columns {
             let col_size = col.size();
-            row.push(col.deserialize(&data[offset..offset + col_size])?);
+            row.push(col.deserialize_row(&data[offset..offset + col_size])?);
             offset += col_size;
         }
         Ok(row)

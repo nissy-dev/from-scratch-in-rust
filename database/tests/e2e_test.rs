@@ -21,8 +21,7 @@ impl TestProcess {
             .spawn()
             .expect("Failed to start database process");
         let stdin = child.stdin.as_mut().expect("Failed to open stdin");
-        // スキーマはあらかじめ作っておく
-        let mut all_commands = vec!["create int text(32) text(255)".into()];
+        let mut all_commands = Vec::new();
         all_commands.extend(commands);
         // 終了コマンドを追加
         all_commands.push(".exit".into());
@@ -57,19 +56,23 @@ impl Drop for TestProcess {
 
 #[test]
 fn test_insert_and_select() {
-    let mut process = TestProcess::new("./test.db");
-    let commands = vec!["insert 1 user1 person1@example.com".into(), "select".into()];
+    let mut process = TestProcess::new("./test-1.db");
+    let commands = vec![
+        "create int text(32) text(255)".into(),
+        "insert 1 user1 person1@example.com".into(),
+        "select".into(),
+    ];
     let results = process.run_script(commands);
-    println!("results {:?}", results);
     assert!(results[0].contains("(1, user1, person1@example.com)"))
 }
 
 #[test]
 fn test_insert_max_length() {
-    let mut process = TestProcess::new("./test.db");
+    let mut process = TestProcess::new("./test-2.db");
     let long_username = "a".repeat(32);
     let long_email = "a".repeat(255);
     let commands = vec![
+        "create int text(32) text(255)".into(),
         format!("insert 1 {} {}", long_username, long_email),
         "select".into(),
     ];
@@ -79,32 +82,39 @@ fn test_insert_max_length() {
 
 #[test]
 fn test_insert_invalid_max_length() {
-    let mut process = TestProcess::new("./test.db");
+    let mut process = TestProcess::new("./test-3.db");
     let long_username = "a".repeat(33);
     let long_email = "a".repeat(256);
-    let commands = vec![format!("insert 1 {} {}", long_username, long_email)];
+    let commands = vec![
+        "create int text(32) text(255)".into(),
+        format!("insert 1 {} {}", long_username, long_email),
+    ];
     let results = process.run_script(commands);
     assert!(results[0].contains("Error: Failed to validate row"));
 }
 
 #[test]
 fn test_table_full() {
-    let mut process = TestProcess::new("./test.db");
-    let commands = (1..1402)
+    let mut process = TestProcess::new("./test-4.db");
+    let mut commands = (1..1402)
         .map(|i| format!("insert {} user{} person{}@example.com", i, i, i))
         .collect::<Vec<_>>();
+    commands.insert(0, "create int text(32) text(255)".into());
     let results = process.run_script(commands);
     assert!(results[0].contains("Error: Table is full"));
 }
 
-// #[test]
-// fn test_data_persistence() {
-//     let mut process = TestProcess::new("./test.db");
+#[test]
+fn test_data_persistence() {
+    let mut process = TestProcess::new("./test-5.db");
 
-//     let commands = vec!["insert 1 user1 person1@example.com".into()];
-//     process.run_script(commands);
+    let commands = vec![
+        "create int text(32) text(255)".into(),
+        "insert 1 user1 person1@example.com".into(),
+    ];
+    process.run_script(commands);
 
-//     let commands = vec!["select".into()];
-//     let results = process.run_script(commands);
-//     assert!(results[0].contains("(1, user1, person1@example.com)"));
-// }
+    let commands = vec!["select".into()];
+    let results = process.run_script(commands);
+    assert!(results[0].contains("(1, user1, person1@example.com)"));
+}

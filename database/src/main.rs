@@ -24,7 +24,7 @@ fn main() -> Result<(), Error> {
 
         if input.is_meta_command() {
             let command = MetaCommand::new(&input.buffer);
-            command.execute()?;
+            command.execute(&mut table)?;
             continue;
         }
 
