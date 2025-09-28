@@ -31,7 +31,7 @@ fn main() -> Result<(), Error> {
         let statement = Statement::new(&input.buffer);
         if let Err(err) = statement.execute(&mut table) {
             println!("Error: {}", err);
-            table.reset()?;
+            table.clear()?;
         }
     }
 }

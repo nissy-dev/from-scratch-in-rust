@@ -130,17 +130,18 @@ impl Schema {
         serialized
     }
 
-    pub fn deserialize_columns(&mut self, data: &[u8]) -> Result<(), Error> {
+    pub fn deserialize_columns(data: &[u8]) -> Result<Self, Error> {
+        let mut schema = Self::new();
         let mut idx = 0;
         while idx < data.len() {
             match data[idx] {
                 COLUMN_INTEGER => {
-                    self.columns.push(Column::Integer);
+                    schema.add_column(Column::Integer);
                     idx += 1;
                 }
                 COLUMN_TEXT => {
                     let size = data[idx + 1];
-                    self.columns.push(Column::Text(size));
+                    schema.add_column(Column::Text(size));
                     idx += 2;
                 }
                 _ => {
@@ -148,7 +149,7 @@ impl Schema {
                 }
             }
         }
-        Ok(())
+        Ok(schema)
     }
 
     pub fn serialize_row(&self, row: &[&str]) -> Result<Vec<u8>, Error> {

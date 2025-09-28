@@ -1,7 +1,6 @@
 use std::{
     fs::{File, OpenOptions},
     io::{BufReader, Read, Seek, SeekFrom, Write},
-    vec,
 };
 
 use anyhow::{Error, Ok, Result};
@@ -12,51 +11,67 @@ const PAGE_SIZE: usize = 4096;
 const MAX_PAGES: usize = 100;
 
 pub struct Cursor {
-    row_idx: usize,
-    page_idx: usize,
+    row_num: usize,
+    page_num: usize,
 }
 
 impl Cursor {
-    pub fn new(row_idx: usize, page_idx: usize) -> Self {
-        Cursor { row_idx, page_idx }
+    pub fn new(row_num: usize, page_num: usize) -> Self {
+        Cursor { row_num, page_num }
+    }
+
+    pub fn as_vec(&self) -> [u8; 2] {
+        [self.page_num as u8, self.row_num as u8]
+    }
+
+    pub fn from_vec(data: &[u8]) -> Self {
+        Cursor {
+            page_num: data[0] as usize,
+            row_num: data[1] as usize,
+        }
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct Page {
-    data: [u8; PAGE_SIZE],
-    offset: usize,
+    buffer: [u8; PAGE_SIZE],
 }
 
+// 最初の 2byte は offset 情報として使用する
 impl Page {
     pub fn new() -> Self {
-        Page {
-            data: [0; PAGE_SIZE],
-            offset: 0,
-        }
+        let mut buffer = [0; PAGE_SIZE];
+        buffer[0..2].copy_from_slice(&(2u16).to_le_bytes());
+        Page { buffer }
     }
 
-    pub fn insert(&mut self, data: Vec<u8>) -> Result<(), Error> {
-        if self.offset + data.len() > PAGE_SIZE {
-            return Err(Error::msg("Page is full"));
-        }
-        self.data[self.offset..self.offset + data.len()].copy_from_slice(&data);
-        self.offset += data.len();
-        Ok(())
-    }
-
-    pub fn insert_by_offset(&mut self, data: Vec<u8>, offset: usize) -> Result<(), Error> {
+    pub fn insert(&mut self, data: &[u8]) -> Result<(), Error> {
+        let offset = u16::from_le_bytes([self.buffer[0], self.buffer[1]]) as usize;
         if offset + data.len() > PAGE_SIZE {
             return Err(Error::msg("Page is full"));
         }
-        self.data[offset..offset + data.len()].copy_from_slice(&data);
+        self.buffer[offset..offset + data.len()].copy_from_slice(&data);
+        self.buffer[0..2].copy_from_slice(&((offset + data.len()) as u16).to_le_bytes());
         Ok(())
+    }
+
+    pub fn load(&mut self, buffer: &[u8]) -> Result<(), Error> {
+        if buffer.len() != PAGE_SIZE {
+            return Err(Error::msg("Invalid page size"));
+        }
+        self.buffer.copy_from_slice(buffer);
+        Ok(())
+    }
+
+    pub fn data(&self) -> &[u8] {
+        &self.buffer[2..]
+    }
+
+    pub fn clear(&mut self) {
+        self.buffer = Self::new().buffer;
     }
 }
 
-// ページを管理する構造体
-// １ページ目には schema 情報と cursor の情報を保存する
-// ２ページ目以降にデータを保存する
 pub struct Pager {
     file: File,
     pages: [Option<Box<Page>>; MAX_PAGES],
@@ -73,7 +88,7 @@ impl Pager {
     }
 
     pub fn get_page(&mut self, page_idx: usize) -> Result<&mut Page, Error> {
-        if page_idx + 1 >= MAX_PAGES {
+        if page_idx > (MAX_PAGES - 1) {
             return Err(Error::msg("Table is full"));
         }
         // page が None の場合
@@ -85,7 +100,7 @@ impl Pager {
                 let mut reader = BufReader::new(&self.file);
                 reader.seek(SeekFrom::Start((page_idx * PAGE_SIZE) as u64))?;
                 reader.read_exact(&mut buffer)?;
-                page.insert(buffer.to_vec())?;
+                page.load(&buffer)?;
             }
             self.pages[page_idx] = Some(Box::new(page));
         }
@@ -94,13 +109,11 @@ impl Pager {
             .ok_or_else(|| Error::msg("page not found"))
     }
 
-    pub fn flush(&mut self, page_idx: usize, row_idx: usize) -> Result<(), Error> {
-        let page = self.get_page(0)?;
-        page.insert_by_offset(vec![page_idx as u8, row_idx as u8], 0)?;
-        for i in 0..=page_idx {
+    pub fn flush(&mut self) -> Result<(), Error> {
+        for i in 0..MAX_PAGES {
             if let Some(page) = &self.pages[i] {
                 self.file.seek(SeekFrom::Start((i * PAGE_SIZE) as u64))?;
-                self.file.write_all(&page.data)?;
+                self.file.write_all(&page.buffer)?;
             }
         }
         Ok(())
@@ -113,6 +126,8 @@ impl Pager {
     }
 }
 
+// １ページ目には schema 情報と cursor の情報を保存する
+// ２ページ目以降にデータを保存する
 pub struct Table {
     schema: Schema,
     pager: Pager,
@@ -127,33 +142,27 @@ impl Table {
             .create(true)
             .open(file_path)?;
         if file.metadata()?.len() == 0 {
-            Ok(Table {
+            return Ok(Table {
                 schema: Schema::new(),
                 pager: Pager::new(file),
                 cursor: Cursor::new(0, 0),
-            })
-        } else {
-            let mut schema = Schema::new();
-            let mut pager = Pager::new(file);
-            let page = pager.get_page(0)?;
-            let page_idx = page.data[0] as usize;
-            let row_idx = page.data[1] as usize;
-            schema.deserialize_columns(&page.data[2..])?;
-            Ok(Table {
-                schema,
-                pager,
-                cursor: Cursor::new(row_idx, page_idx),
-            })
+            });
         }
+        let mut pager = Pager::new(file);
+        let page = pager.get_page(0)?;
+        let cursor = Cursor::from_vec(&page.data()[0..2]);
+        let schema = Schema::deserialize_columns(&page.data()[2..])?;
+        Ok(Table {
+            schema,
+            pager,
+            cursor,
+        })
     }
 
     pub fn set_columns(&mut self, columns: Vec<Column>) -> Result<(), Error> {
         for col in columns {
             self.schema.add_column(col);
         }
-        let page = self.pager.get_page(0)?;
-        page.insert_by_offset(self.schema.serialize_columns(), 2)?;
-        self.cursor.page_idx += 1;
         Ok(())
     }
 
@@ -164,16 +173,15 @@ impl Table {
         if !self.schema.validate_row(row) {
             return Err(Error::msg("Failed to validate row"));
         }
-        let serialized_row = self.schema.serialize_row(row)?;
-        let max_row_num = PAGE_SIZE / self.schema.row_size();
-        if self.cursor.row_idx >= max_row_num {
+        let row_num_per_page = PAGE_SIZE / self.schema.row_size();
+        if self.cursor.row_num != 0 && self.cursor.row_num % row_num_per_page == 0 {
             // page の空きがない場合は次のページへ
-            self.cursor.page_idx += 1;
-            self.cursor.row_idx = 0;
+            self.cursor.page_num += 1;
         }
-        let page = self.pager.get_page(self.cursor.page_idx)?;
-        page.insert(serialized_row)?;
-        self.cursor.row_idx += 1;
+        // １ページ目は schema 情報と cursor 情報を保存するため、データは２ページ目から保存する
+        let page = self.pager.get_page(self.cursor.page_num + 1)?;
+        page.insert(&self.schema.serialize_row(row)?)?;
+        self.cursor.row_num += 1;
         Ok(())
     }
 
@@ -183,31 +191,32 @@ impl Table {
         }
         let mut rows = Vec::new();
         let row_size = self.schema.row_size();
-        let max_row_num = PAGE_SIZE / row_size;
-        for i in 1..=self.cursor.page_idx {
-            let page = self.pager.get_page(i)?;
-            if i == self.cursor.page_idx {
-                // 最終ページは row_idx まで読む
-                for j in 0..self.cursor.row_idx {
-                    let data = &page.data[j * row_size..(j + 1) * row_size];
-                    rows.push(self.schema.deserialize_row(data)?);
-                }
+        let row_num_per_page = PAGE_SIZE / row_size;
+        for i in 0..=self.cursor.page_num {
+            let page = self.pager.get_page(i + 1)?;
+            let row_num = if i == self.cursor.page_num {
+                self.cursor.row_num % row_num_per_page
             } else {
-                // それ以外は max_row_num だけ読む
-                for j in 0..max_row_num {
-                    let data = &page.data[j * row_size..(j + 1) * row_size];
-                    rows.push(self.schema.deserialize_row(data)?);
-                }
+                row_num_per_page
+            };
+            for j in 0..row_num {
+                let data = &page.data()[j * row_size..(j + 1) * row_size];
+                rows.push(self.schema.deserialize_row(data)?);
             }
         }
         Ok(rows)
     }
 
     pub fn save(&mut self) -> Result<(), Error> {
-        self.pager.flush(self.cursor.page_idx, self.cursor.row_idx)
+        // schema と cursor の情報を１ページ目に保存する
+        let page = self.pager.get_page(0)?;
+        page.clear();
+        page.insert(&self.cursor.as_vec())?;
+        page.insert(&self.schema.serialize_columns())?;
+        self.pager.flush()
     }
 
-    pub fn reset(&mut self) -> Result<(), Error> {
+    pub fn clear(&mut self) -> Result<(), Error> {
         self.schema = Schema::new();
         self.pager.clear()?;
         self.cursor = Cursor::new(0, 0);

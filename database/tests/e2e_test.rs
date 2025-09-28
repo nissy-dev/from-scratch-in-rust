@@ -96,7 +96,7 @@ fn test_insert_invalid_max_length() {
 #[test]
 fn test_table_full() {
     let mut process = TestProcess::new("./test-4.db");
-    let mut commands = (1..1402)
+    let mut commands = (1..1388)
         .map(|i| format!("insert {} user{} person{}@example.com", i, i, i))
         .collect::<Vec<_>>();
     commands.insert(0, "create int text(32) text(255)".into());
