@@ -81,7 +81,8 @@ impl<'a> Statement<'a> {
             Some("select") => {
                 let rows = table.get_all_rows()?;
                 for (i, row) in rows.iter().enumerate() {
-                    println!("row {}: ({})", i, row.join(", "));
+                    let printable: Vec<String> = row.iter().map(|v| v.to_string()).collect();
+                    println!("row {}: ({})", i, printable.join(", "));
                 }
             }
             _ => {

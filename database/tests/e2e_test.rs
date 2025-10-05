@@ -90,7 +90,7 @@ fn test_insert_invalid_max_length() {
         format!("insert 1 {} {}", long_username, long_email),
     ];
     let results = process.run_script(commands);
-    assert!(results[0].contains("Error: Failed to validate row"));
+    assert!(results[0].contains("Error: Text too long"));
 }
 
 #[test]

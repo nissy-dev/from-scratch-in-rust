@@ -1,4 +1,6 @@
 use anyhow::{Error, Ok, Result};
+use core::str;
+use std::fmt;
 
 const COLUMN_INTEGER: u8 = 1;
 const COLUMN_TEXT: u8 = 2;
@@ -7,7 +9,13 @@ const COLUMN_TEXT: u8 = 2;
 #[derive(Debug, Clone)]
 pub enum Column {
     Integer,  // 32bit
-    Text(u8), // size は最大で 255
+    Text(u8), // size は最大で 255 (固定長文字列格納)
+}
+
+#[derive(Debug, Clone)]
+pub enum Value {
+    Integer(i32),
+    Text(String),
 }
 
 impl TryFrom<&str> for Column {
@@ -28,6 +36,15 @@ impl TryFrom<&str> for Column {
     }
 }
 
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Value::Integer(i) => write!(f, "{}", i),
+            Value::Text(s) => write!(f, "{}", s),
+        }
+    }
+}
+
 impl Column {
     pub fn size(&self) -> usize {
         match self {
@@ -36,48 +53,53 @@ impl Column {
         }
     }
 
-    pub fn validate(&self, value: &str) -> bool {
-        match self {
-            Column::Integer => value.parse::<i32>().is_ok(),
-            Column::Text(size) => value.len() <= *size as usize,
-        }
-    }
-
-    pub fn serialize_row(&self, value: &str) -> Result<Vec<u8>, Error> {
+    pub fn parse_value(&self, raw_str_value: &str) -> Result<Value, Error> {
         match self {
             Column::Integer => {
-                let int_value = value
+                let v = raw_str_value
                     .parse::<i32>()
                     .map_err(|_| Error::msg("Invalid integer value"))?;
-                Ok(int_value.to_le_bytes().to_vec())
+                Ok(Value::Integer(v))
             }
             Column::Text(size) => {
-                let mut bytes = vec![0; *size as usize];
-                let value_bytes = value.as_bytes();
-                bytes[..value_bytes.len()].copy_from_slice(&value_bytes);
-                Ok(bytes)
+                if raw_str_value.len() > *size as usize {
+                    return Err(Error::msg("Text too long"));
+                }
+                Ok(Value::Text(raw_str_value.to_string()))
             }
         }
     }
 
-    pub fn deserialize_row(&self, data: &[u8]) -> Result<String, Error> {
+    pub fn serialize_value(&self, value: &Value) -> Result<Vec<u8>, Error> {
+        match (self, value) {
+            (Column::Integer, Value::Integer(i)) => Ok(i.to_le_bytes().to_vec()),
+            (Column::Text(size), Value::Text(s)) => {
+                let mut buf = vec![0u8; *size as usize];
+                let str_bytes = s.as_bytes();
+                buf[..str_bytes.len()].copy_from_slice(str_bytes);
+                Ok(buf)
+            }
+            _ => Err(Error::msg("Column / Value type mismatch")),
+        }
+    }
+
+    pub fn deserialize_value(&self, data: &[u8]) -> Result<Value, Error> {
         match self {
             Column::Integer => {
                 if data.len() != 4 {
                     return Err(Error::msg("Invalid data length for integer"));
                 }
-                let int_bytes = [data[0], data[1], data[2], data[3]];
-                let int_value = i32::from_le_bytes(int_bytes);
-                Ok(int_value.to_string())
+                let mut arr = [0u8; 4];
+                arr.copy_from_slice(&data[0..4]);
+                Ok(Value::Integer(i32::from_le_bytes(arr)))
             }
             Column::Text(size) => {
                 if data.len() != *size as usize {
                     return Err(Error::msg("Invalid data length for text"));
                 }
-                let text_value = String::from_utf8(data.to_vec())
+                let s = String::from_utf8(data.to_vec())
                     .map_err(|_| Error::msg("Invalid UTF-8 sequence"))?;
-                // 0 を取り除く処理が必要
-                Ok(text_value.trim_end_matches(char::from(0)).to_string())
+                Ok(Value::Text(s.trim_end_matches(char::from(0)).to_string()))
             }
         }
     }
@@ -103,17 +125,15 @@ impl Schema {
         self.columns.push(column);
     }
 
-    pub fn validate_row(&self, row: &[&str]) -> bool {
-        if self.columns.len() != row.len() {
-            return false;
+    pub fn parse_row(&self, tokens: &[&str]) -> Result<Vec<Value>, Error> {
+        if self.columns.len() != tokens.len() {
+            return Err(Error::msg("Column count mismatch"));
         }
-
-        for (col, value) in self.columns.iter().zip(row.iter()) {
-            if !col.validate(value) {
-                return false;
-            }
-        }
-        true
+        self.columns
+            .iter()
+            .zip(tokens.iter())
+            .map(|(c, t)| c.parse_value(t))
+            .collect()
     }
 
     // スキーマの行定義をバイナリ形式でシリアライズする
@@ -152,21 +172,21 @@ impl Schema {
         Ok(schema)
     }
 
-    pub fn serialize_row(&self, row: &[&str]) -> Result<Vec<u8>, Error> {
-        let mut serialized = Vec::new();
-        for (col, value) in self.columns.iter().zip(row.iter()) {
-            serialized.extend(col.serialize_row(value)?);
+    pub fn serialize_row_values(&self, values: &[Value]) -> Result<Vec<u8>, Error> {
+        let mut out = Vec::new();
+        for (col, value) in self.columns.iter().zip(values.iter()) {
+            out.extend(col.serialize_value(value)?);
         }
-        Ok(serialized)
+        Ok(out)
     }
 
-    pub fn deserialize_row(&self, data: &[u8]) -> Result<Vec<String>, Error> {
+    pub fn deserialize_row_values(&self, data: &[u8]) -> Result<Vec<Value>, Error> {
         let mut offset = 0;
         let mut row = Vec::new();
         for col in &self.columns {
-            let col_size = col.size();
-            row.push(col.deserialize_row(&data[offset..offset + col_size])?);
-            offset += col_size;
+            let sz = col.size();
+            row.push(col.deserialize_value(&data[offset..offset + sz])?);
+            offset += sz;
         }
         Ok(row)
     }

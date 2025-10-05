@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::{Error, Ok, Result};
 
-use crate::schema::{Column, Schema};
+use crate::schema::{Column, Schema, Value};
 
 const PAGE_SIZE: usize = 4096;
 const MAX_PAGES: usize = 100;
@@ -166,13 +166,11 @@ impl Table {
         Ok(())
     }
 
-    pub fn set_row(&mut self, row: &[&str]) -> Result<(), Error> {
+    pub fn set_row(&mut self, tokens: &[&str]) -> Result<(), Error> {
         if !self.schema.is_defined() {
             return Err(Error::msg("Schema is not defined"));
         }
-        if !self.schema.validate_row(row) {
-            return Err(Error::msg("Failed to validate row"));
-        }
+        let values = self.schema.parse_row(tokens)?;
         let row_num_per_page = PAGE_SIZE / self.schema.row_size();
         if self.cursor.row_num != 0 && self.cursor.row_num % row_num_per_page == 0 {
             // page の空きがない場合は次のページへ
@@ -180,12 +178,12 @@ impl Table {
         }
         // １ページ目は schema 情報と cursor 情報を保存するため、データは２ページ目から保存する
         let page = self.pager.get_page(self.cursor.page_num + 1)?;
-        page.insert(&self.schema.serialize_row(row)?)?;
+        page.insert(&self.schema.serialize_row_values(&values)?)?;
         self.cursor.row_num += 1;
         Ok(())
     }
 
-    pub fn get_all_rows(&mut self) -> Result<Vec<Vec<String>>, Error> {
+    pub fn get_all_rows(&mut self) -> Result<Vec<Vec<Value>>, Error> {
         if !self.schema.is_defined() {
             return Err(Error::msg("Schema is not defined"));
         }
@@ -201,7 +199,7 @@ impl Table {
             };
             for j in 0..row_num {
                 let data = &page.data()[j * row_size..(j + 1) * row_size];
-                rows.push(self.schema.deserialize_row(data)?);
+                rows.push(self.schema.deserialize_row_values(data)?);
             }
         }
         Ok(rows)
