@@ -1,6 +1,6 @@
 use anyhow::{Error, Ok, Result};
 
-use crate::backend::Table;
+use crate::old_backend::OldTable;
 
 pub struct InputBuffer {
     pub buffer: String,
@@ -36,7 +36,7 @@ impl<'a> MetaCommand<'a> {
         MetaCommand { command }
     }
 
-    pub fn execute(&self, table: &mut Table) -> Result<(), Error> {
+    pub fn execute(&self, table: &mut OldTable) -> Result<(), Error> {
         match self.command {
             ".exit" => {
                 table.save()?;
@@ -58,7 +58,7 @@ impl<'a> Statement<'a> {
         Statement { content }
     }
 
-    pub fn execute(&self, table: &mut Table) -> Result<(), Error> {
+    pub fn execute(&self, table: &mut OldTable) -> Result<(), Error> {
         let mut tokens = self.content.split_whitespace().into_iter();
         match tokens.next() {
             // create <column_type> ...
@@ -68,18 +68,18 @@ impl<'a> Statement<'a> {
                 while let Some(column) = tokens.next() {
                     columns.push(column.try_into()?);
                 }
-                table.set_columns(columns)?;
+                table.set_schema(columns)?;
             }
             // insert <value> ...
             // ex) insert 1 hello world
             Some("insert") => {
                 let values: Vec<&str> = tokens.collect();
-                table.set_row(&values)?;
+                table.insert(&values)?;
             }
             // select
             // ex) select
             Some("select") => {
-                let rows = table.get_all_rows()?;
+                let rows = table.select_all()?;
                 for (i, row) in rows.iter().enumerate() {
                     let printable: Vec<String> = row.iter().map(|v| v.to_string()).collect();
                     println!("row {}: ({})", i, printable.join(", "));

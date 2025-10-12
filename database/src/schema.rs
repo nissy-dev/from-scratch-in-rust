@@ -99,6 +99,7 @@ impl Column {
                 }
                 let s = String::from_utf8(data.to_vec())
                     .map_err(|_| Error::msg("Invalid UTF-8 sequence"))?;
+                // 0 を trim する必要がある
                 Ok(Value::Text(s.trim_end_matches(char::from(0)).to_string()))
             }
         }
@@ -184,9 +185,9 @@ impl Schema {
         let mut offset = 0;
         let mut row = Vec::new();
         for col in &self.columns {
-            let sz = col.size();
-            row.push(col.deserialize_value(&data[offset..offset + sz])?);
-            offset += sz;
+            let col_size = col.size();
+            row.push(col.deserialize_value(&data[offset..offset + col_size])?);
+            offset += col_size;
         }
         Ok(row)
     }

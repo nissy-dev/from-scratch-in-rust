@@ -1,5 +1,6 @@
 mod backend;
 mod frontend;
+mod old_backend;
 mod schema;
 
 use std::{env::args, io::Write};
@@ -16,7 +17,7 @@ fn main() -> Result<(), Error> {
     }
     let mut input = InputBuffer::new();
     // 複数テーブルサポートはしない
-    let mut table = backend::Table::new(&args[1])?;
+    let mut table = old_backend::OldTable::new(&args[1])?;
     loop {
         print!("db > ");
         std::io::stdout().flush().unwrap();
