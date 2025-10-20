@@ -1,6 +1,6 @@
 use anyhow::{Error, Ok, Result};
 
-use crate::old_backend::OldTable;
+use crate::backend::Table;
 
 pub struct InputBuffer {
     pub buffer: String,
@@ -36,7 +36,7 @@ impl<'a> MetaCommand<'a> {
         MetaCommand { command }
     }
 
-    pub fn execute(&self, table: &mut OldTable) -> Result<(), Error> {
+    pub fn execute(&self, table: &mut Table) -> Result<(), Error> {
         match self.command {
             ".exit" => {
                 table.save()?;
@@ -58,7 +58,7 @@ impl<'a> Statement<'a> {
         Statement { content }
     }
 
-    pub fn execute(&self, table: &mut OldTable) -> Result<(), Error> {
+    pub fn execute(&self, table: &mut Table) -> Result<(), Error> {
         let mut tokens = self.content.split_whitespace().into_iter();
         match tokens.next() {
             // create <column_type> ...

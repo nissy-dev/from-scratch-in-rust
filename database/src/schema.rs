@@ -192,7 +192,7 @@ impl Schema {
         Ok(row)
     }
 
-    pub fn row_size(&self) -> usize {
-        self.columns.iter().map(|col| col.size()).sum()
+    pub fn clear(&mut self) {
+        self.columns.clear();
     }
 }

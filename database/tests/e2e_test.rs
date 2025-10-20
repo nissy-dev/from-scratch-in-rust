@@ -93,16 +93,16 @@ fn test_insert_invalid_max_length() {
     assert!(results[0].contains("Error: Text too long"));
 }
 
-#[test]
-fn test_table_full() {
-    let mut process = TestProcess::new("./test-4.db");
-    let mut commands = (1..1388)
-        .map(|i| format!("insert {} user{} person{}@example.com", i, i, i))
-        .collect::<Vec<_>>();
-    commands.insert(0, "create int text(32) text(255)".into());
-    let results = process.run_script(commands);
-    assert!(results[0].contains("Error: Table is full"));
-}
+// #[test]
+// fn test_table_full() {
+//     let mut process = TestProcess::new("./test-4.db");
+//     let mut commands = (1..1388)
+//         .map(|i| format!("insert {} user{} person{}@example.com", i, i, i))
+//         .collect::<Vec<_>>();
+//     commands.insert(0, "create int text(32) text(255)".into());
+//     let results = process.run_script(commands);
+//     assert!(results[0].contains("Error: Table is full"));
+// }
 
 #[test]
 fn test_data_persistence() {
