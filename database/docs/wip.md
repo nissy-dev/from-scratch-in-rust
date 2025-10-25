@@ -1,3 +1,9 @@
+# B+Tree実装 - 現在のコード
+
+## backend.rs
+
+```rust
+// filepath: [backend.rs](http://_vscodecontentref_/0)
 use std::{
     collections::{hash_map::Entry, HashMap},
     fs::{File, OpenOptions},
@@ -430,3 +436,28 @@ impl Table {
         Ok(())
     }
 }
+```
+
+## 現在の状況と次のステップ
+
+### 実装済み
+
+- 基本的なBTreeNodeの構造（Internal/Leaf）
+- ページのシリアライゼーション/デシリアライゼーション
+- リーフノードの分割機能（splitメソッド）
+- 単純な挿入機能（ルートがリーフの場合のみ）
+
+### TODO（次に実装が必要な箇所）
+
+- insert_recursiveメソッドの完成
+- 内部ノードを辿って適切なリーフノードを見つける機能
+- ルート分割時の新しいルート作成
+- 内部ノードの分割機能
+- B+Treeのリーフノード間リンクの適切な管理
+- 完全なツリー走査機能
+
+### コンパイルエラー箇所
+
+- insert_recursiveメソッド内の存在しないメソッド呼び出し
+- Pagerのupdate_nodeメソッドが未実装
+- BTreeInternalのfind_child_page_idメソッドが未実装
