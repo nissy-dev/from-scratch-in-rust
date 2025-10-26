@@ -122,3 +122,15 @@ fn test_data_persistence() {
     let results = process.run_script(commands);
     assert!(results[0].contains("(1, user1, person1@example.com)"));
 }
+
+#[test]
+fn test_insert_duplicate_key() {
+    let mut process = TestProcess::new("./test-6.db");
+    let commands = vec![
+        "create int text(32) text(255)".into(),
+        "insert 1 user1 person1@example.com".into(),
+        "insert 1 user2 person2@example.com".into(),
+    ];
+    let results = process.run_script(commands);
+    assert!(results[0].contains("Error: Duplicate key"));
+}
