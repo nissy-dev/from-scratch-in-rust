@@ -3,7 +3,6 @@ use std::{
     collections::{hash_map::Entry, HashMap},
     fs::{File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
-    result::Result::Ok,
 };
 
 use anyhow::{Error, Result};
@@ -212,24 +211,24 @@ impl BTreeNode {
 struct Pager {
     file: File,
     cache: HashMap<u32, BTreeNode>,
-    num_pages: u32,
+    num_data_pages: u32,
 }
 
 impl Pager {
-    pub fn new(file: File, num_pages: u32) -> Result<Self, Error> {
+    pub fn new(file: File, num_data_pages: u32) -> Result<Self, Error> {
         Ok(Self {
             file,
             cache: HashMap::new(),
-            num_pages,
+            num_data_pages,
         })
     }
 
     pub fn allocate_node(&mut self, node: BTreeNode) -> Result<u32> {
-        if self.num_pages as usize >= MAX_PAGES {
+        if self.num_data_pages as usize >= MAX_PAGES {
             return Err(Error::msg("Maximum number of pages reached"));
         }
-        self.num_pages += 1;
-        let page_id = self.num_pages - 1;
+        self.num_data_pages += 1;
+        let page_id = self.num_data_pages - 1;
         self.cache.insert(page_id, node);
         Ok(page_id)
     }
@@ -265,7 +264,7 @@ impl Pager {
     pub fn clear(&mut self) -> Result<()> {
         self.file.set_len(0)?;
         self.cache.clear();
-        self.num_pages = 0;
+        self.num_data_pages = 0;
         Ok(())
     }
 }
@@ -376,8 +375,8 @@ impl Table {
 
     fn find_leaf_node_page_id(&mut self, root_page_id: u32, key: u32) -> Result<u32, Error> {
         let mut page_id = root_page_id;
+        let mut pager = self.pager.borrow_mut();
         loop {
-            let mut pager = self.pager.borrow_mut();
             match pager.get_page(page_id)? {
                 BTreeNode::Leaf(_) => return Ok(page_id),
                 BTreeNode::Internal(internal) => {
@@ -446,14 +445,14 @@ impl Table {
         parent_node.keys.insert(pos, split_key);
         parent_node.children.insert(pos + 1, right_page_id);
         // 左右のリーフノードを更新する
-        let mut perv_right_next_leaf = None;
+        let mut prev_leaf_node_next_leaf = None;
         if let BTreeNode::Leaf(left_leaf) = pager.get_page(left_page_id)? {
-            perv_right_next_leaf = left_leaf.next_leaf;
+            prev_leaf_node_next_leaf = left_leaf.next_leaf;
             left_leaf.next_leaf = Some(right_page_id);
         }
         if let BTreeNode::Leaf(right_leaf) = pager.get_page(right_page_id)? {
             right_leaf.parent = Some(parent_page_id);
-            right_leaf.next_leaf = perv_right_next_leaf;
+            right_leaf.next_leaf = prev_leaf_node_next_leaf;
         }
         Ok(())
     }
@@ -462,9 +461,9 @@ impl Table {
         let mut results = Vec::new();
         let left_end_node_page_id = self.find_left_end_node_page_id()?;
         // next_leaf を辿りながらすべての行を取得する
+        let mut pager = self.pager.borrow_mut();
         let mut current_leaf_page_id = Some(left_end_node_page_id);
         while let Some(page_id) = current_leaf_page_id {
-            let mut pager = self.pager.borrow_mut();
             let leaf_node = match pager.get_page(page_id)? {
                 BTreeNode::Leaf(leaf) => leaf,
                 _ => return Err(Error::msg("Expected leaf node")),
@@ -477,10 +476,10 @@ impl Table {
         Ok(results)
     }
 
-    pub fn find_left_end_node_page_id(&mut self) -> Result<u32, Error> {
+    fn find_left_end_node_page_id(&mut self) -> Result<u32, Error> {
         let mut page_id = self.root_page_id;
+        let mut pager = self.pager.borrow_mut();
         loop {
-            let mut pager = self.pager.borrow_mut();
             match pager.get_page(page_id)? {
                 BTreeNode::Leaf(_) => return Ok(page_id),
                 BTreeNode::Internal(internal) => {
@@ -492,9 +491,9 @@ impl Table {
 
     pub fn debug_tree(&mut self) -> Result<(), Error> {
         let mut pager = self.pager.borrow_mut();
-        for page_id in 0..pager.num_pages {
+        let mut stack = vec![self.root_page_id];
+        while let Some(page_id) = stack.pop() {
             let node = pager.get_page(page_id)?;
-            println!("Page ID: {}", page_id);
             match node {
                 BTreeNode::Internal(internal) => {
                     println!(
@@ -503,6 +502,10 @@ impl Table {
                     );
                     println!("  Keys: {:?}", internal.keys);
                     println!("  Children: {:?}", internal.children);
+
+                    for &child_page_id in internal.children.iter().rev() {
+                        stack.push(child_page_id);
+                    }
                 }
                 BTreeNode::Leaf(leaf) => {
                     println!("  Leaf Node - is_root: {}", page_id == self.root_page_id);
