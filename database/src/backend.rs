@@ -23,7 +23,6 @@ enum BTreeNode {
 
 #[derive(Debug)]
 struct BTreeInternal {
-    is_root: bool,
     parent: Option<u32>,
     keys: Vec<u32>,
     children: Vec<u32>, // children[i] < keys[i] < children[i+1]
@@ -33,11 +32,10 @@ impl BTreeInternal {
     fn serialize(&self) -> [u8; PAGE_SIZE] {
         let mut buffer = [0u8; PAGE_SIZE];
         buffer[0] = 0;
-        buffer[1] = self.is_root as u8;
         let parent_pointer = self.parent.unwrap_or(PARENT_POINTER_NONE);
-        buffer[2..6].copy_from_slice(&parent_pointer.to_le_bytes());
-        buffer[6..10].copy_from_slice(&(self.keys.len() as u32).to_le_bytes());
-        let mut offset = 10;
+        buffer[1..5].copy_from_slice(&parent_pointer.to_le_bytes());
+        buffer[5..9].copy_from_slice(&(self.keys.len() as u32).to_le_bytes());
+        let mut offset = 9;
         for key in self.keys.iter() {
             buffer[offset..offset + 4].copy_from_slice(&key.to_le_bytes());
             offset += 4;
@@ -52,8 +50,7 @@ impl BTreeInternal {
     }
 
     fn deserialize(buffer: &[u8; PAGE_SIZE]) -> Self {
-        let is_root = buffer[1] != 0;
-        let parent = u32::from_le_bytes(buffer[2..6].try_into().unwrap());
+        let parent = u32::from_le_bytes(buffer[1..5].try_into().unwrap());
         let parent = if parent == PARENT_POINTER_NONE {
             None
         } else {
@@ -61,8 +58,8 @@ impl BTreeInternal {
         };
         let mut keys = Vec::new();
         let mut children = Vec::new();
-        let mut offset = 10;
-        let num_keys = u32::from_le_bytes(buffer[6..10].try_into().unwrap());
+        let mut offset = 9;
+        let num_keys = u32::from_le_bytes(buffer[5..9].try_into().unwrap());
         for _ in 0..num_keys {
             keys.push(u32::from_le_bytes(
                 buffer[offset..offset + 4].try_into().unwrap(),
@@ -77,7 +74,6 @@ impl BTreeInternal {
             offset += 4;
         }
         Self {
-            is_root,
             parent,
             keys,
             children,
@@ -87,7 +83,6 @@ impl BTreeInternal {
 
 #[derive(Debug)]
 struct BTreeLeaf {
-    is_root: bool,
     parent: Option<u32>,
     keys: Vec<u32>,
     values: Vec<Vec<u8>>,
@@ -98,13 +93,12 @@ impl BTreeLeaf {
     fn serialize(&self) -> [u8; PAGE_SIZE] {
         let mut buffer = [0u8; PAGE_SIZE];
         buffer[0] = 1;
-        buffer[1] = self.is_root as u8;
         let parent_pointer = self.parent.unwrap_or(PARENT_POINTER_NONE);
-        buffer[2..6].copy_from_slice(&parent_pointer.to_le_bytes());
+        buffer[1..5].copy_from_slice(&parent_pointer.to_le_bytes());
         let next_leaf_pointer = self.next_leaf.unwrap_or(PARENT_POINTER_NONE);
-        buffer[6..10].copy_from_slice(&next_leaf_pointer.to_le_bytes());
-        buffer[10..14].copy_from_slice(&(self.keys.len() as u32).to_le_bytes());
-        let mut offset = 14;
+        buffer[5..9].copy_from_slice(&next_leaf_pointer.to_le_bytes());
+        buffer[9..13].copy_from_slice(&(self.keys.len() as u32).to_le_bytes());
+        let mut offset = 13;
         for (key, value) in self.keys.iter().zip(self.values.iter()) {
             buffer[offset..offset + 4].copy_from_slice(&key.to_le_bytes());
             offset += 4;
@@ -117,23 +111,22 @@ impl BTreeLeaf {
     }
 
     fn deserialize(buffer: &[u8; PAGE_SIZE]) -> Self {
-        let is_root = buffer[1] != 0;
-        let parent = u32::from_le_bytes(buffer[2..6].try_into().unwrap());
+        let parent = u32::from_le_bytes(buffer[1..5].try_into().unwrap());
         let parent = if parent == PARENT_POINTER_NONE {
             None
         } else {
             Some(parent)
         };
-        let next_leaf = u32::from_le_bytes(buffer[6..10].try_into().unwrap());
+        let next_leaf = u32::from_le_bytes(buffer[5..9].try_into().unwrap());
         let next_leaf = if next_leaf == PARENT_POINTER_NONE {
             None
         } else {
             Some(next_leaf)
         };
-        let num_cells = u32::from_le_bytes(buffer[10..14].try_into().unwrap());
+        let num_cells = u32::from_le_bytes(buffer[9..13].try_into().unwrap());
         let mut keys = Vec::new();
         let mut values = Vec::new();
-        let mut offset = 14;
+        let mut offset = 13;
         for _ in 0..num_cells {
             let key = u32::from_le_bytes(buffer[offset..offset + 4].try_into().unwrap());
             offset += 4;
@@ -145,7 +138,6 @@ impl BTreeLeaf {
             values.push(value);
         }
         Self {
-            is_root,
             parent,
             keys,
             values,
@@ -154,7 +146,7 @@ impl BTreeLeaf {
     }
 
     fn is_full_node(&self, value: &[u8]) -> bool {
-        let used_space: usize = 14
+        let used_space: usize = 13
             + self
                 .values
                 .iter()
@@ -181,7 +173,6 @@ impl BTreeLeaf {
         let split_key = new_keys[0];
         let new_values = self.values.split_off(mid_index);
         let new_right_leaf = BTreeLeaf {
-            is_root: false,
             parent: self.parent,
             keys: new_keys,
             values: new_values,
@@ -194,7 +185,6 @@ impl BTreeLeaf {
 impl BTreeNode {
     fn new_leaf_root() -> Self {
         BTreeNode::Leaf(BTreeLeaf {
-            is_root: true,
             parent: None,
             keys: Vec::new(),
             values: Vec::new(),
@@ -411,7 +401,6 @@ impl Table {
         let right_page_id = pager.allocate_node(BTreeNode::Leaf(right_leaf))?;
         // 新しいルートノードを作成する
         let new_root = BTreeInternal {
-            is_root: true,
             parent: None,
             keys: vec![split_key],
             children: vec![left_page_id, right_page_id],
@@ -419,7 +408,6 @@ impl Table {
         let new_root_page_id = pager.allocate_node(BTreeNode::Internal(new_root))?;
         // 左右のリーフノードを更新する
         if let BTreeNode::Leaf(left_leaf) = pager.get_page(left_page_id)? {
-            left_leaf.is_root = false;
             left_leaf.parent = Some(new_root_page_id);
             left_leaf.next_leaf = Some(right_page_id);
         }
@@ -503,17 +491,20 @@ impl Table {
 
     pub fn debug_tree(&mut self) -> Result<(), Error> {
         let mut pager = self.pager.borrow_mut();
-        for page_id in 0..=pager.num_pages {
+        for page_id in 0..pager.num_pages {
             let node = pager.get_page(page_id)?;
             println!("Page ID: {}", page_id);
             match node {
                 BTreeNode::Internal(internal) => {
-                    println!("  Internal Node - is_root: {}", internal.is_root);
+                    println!(
+                        "  Internal Node - is_root: {}",
+                        page_id == self.root_page_id
+                    );
                     println!("  Keys: {:?}", internal.keys);
                     println!("  Children: {:?}", internal.children);
                 }
                 BTreeNode::Leaf(leaf) => {
-                    println!("  Leaf Node - is_root: {}", leaf.is_root);
+                    println!("  Leaf Node - is_root: {}", page_id == self.root_page_id);
                     println!("  Keys: {:?}", leaf.keys);
                     println!("  Values: {:?}", leaf.values);
                     println!("  Next Leaf: {:?}", leaf.next_leaf);
