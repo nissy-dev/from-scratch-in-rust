@@ -58,8 +58,8 @@ impl BTreeInternal {
         };
         let mut keys = Vec::new();
         let mut children = Vec::new();
-        let mut offset = 9;
         let num_keys = u32::from_le_bytes(buffer[5..9].try_into().unwrap());
+        let mut offset = 9;
         for _ in 0..num_keys {
             keys.push(u32::from_le_bytes(
                 buffer[offset..offset + 4].try_into().unwrap(),
@@ -67,6 +67,7 @@ impl BTreeInternal {
             offset += 4;
         }
         let num_children = u32::from_le_bytes(buffer[offset..offset + 4].try_into().unwrap());
+        offset += 4;
         for _ in 0..num_children {
             children.push(u32::from_le_bytes(
                 buffer[offset..offset + 4].try_into().unwrap(),
@@ -439,7 +440,7 @@ impl Table {
         };
         // 親ノードに新しいキーと子を挿入する
         let pos = match parent_node.keys.binary_search(&split_key) {
-            Ok(i) => i + 1,
+            Ok(_) => return Err(Error::msg("Duplicate key in internal node")),
             Err(i) => i,
         };
         parent_node.keys.insert(pos, split_key);
@@ -447,8 +448,8 @@ impl Table {
         // 左右のリーフノードを更新する
         let mut perv_right_next_leaf = None;
         if let BTreeNode::Leaf(left_leaf) = pager.get_page(left_page_id)? {
-            left_leaf.next_leaf = Some(right_page_id);
             perv_right_next_leaf = left_leaf.next_leaf;
+            left_leaf.next_leaf = Some(right_page_id);
         }
         if let BTreeNode::Leaf(right_leaf) = pager.get_page(right_page_id)? {
             right_leaf.parent = Some(parent_page_id);
