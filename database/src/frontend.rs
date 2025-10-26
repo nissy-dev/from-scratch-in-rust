@@ -85,6 +85,9 @@ impl<'a> Statement<'a> {
                     println!("row {}: ({})", i, printable.join(", "));
                 }
             }
+            Some("debug") => {
+                table.debug_tree()?;
+            }
             _ => {
                 println!("Unrecognized statement: '{}'", self.content);
             }
