@@ -438,6 +438,8 @@ impl Table {
             _ => return Err(Error::msg("Expected internal node")),
         };
         // 親ノードに新しいキーと子を挿入する
+        // 制約：キーの数が上限に達したら internal node を分割処理を実装する必要があるが、ここでは実装を省略している。
+        // internal node の分割処理は分割対象の internal node から root node まで再帰的に行う必要があるため、leaf node の分割処理よりも複雑になる。
         let pos = match parent_node.keys.binary_search(&split_key) {
             Ok(_) => return Err(Error::msg("Duplicate key in internal node")),
             Err(i) => i,
